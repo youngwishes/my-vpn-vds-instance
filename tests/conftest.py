@@ -22,4 +22,3 @@ def client() -> Iterator[TestClient]:
 @pytest.fixture
 def auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {AGENT_TOKEN}"}
-

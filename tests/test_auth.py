@@ -17,4 +17,3 @@ def test_bearer_auth_accepts_only_the_configured_token() -> None:
         expected_token="configured-token",
     )
     assert not is_authorized(authorization=None, expected_token="configured-token")
-

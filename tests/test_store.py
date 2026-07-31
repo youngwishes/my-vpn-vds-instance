@@ -33,4 +33,3 @@ def test_store_delete_is_idempotent() -> None:
     store.delete(access_id=999)
 
     assert store.get_all() == ()
-

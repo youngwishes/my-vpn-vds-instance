@@ -2,4 +2,3 @@
 
 test:
 	uv run pytest
-
