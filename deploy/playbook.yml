@@ -1,0 +1,136 @@
+---
+- name: Deploy VPN node runtime
+  hosts: vpn
+  become: true
+  vars:
+    vpn_deploy_root_effective: "{{ vpn_deploy_root | default('/opt/vpn-node') }}"
+
+  tasks:
+    - name: Validate immutable revision and required runtime values
+      ansible.builtin.assert:
+        that:
+          - deploy_revision is defined
+          - deploy_revision | length == 40
+          - vpn_repository_url is defined
+          - vpn_backend_url is defined
+          - vpn_reality_target is defined
+          - vpn_reality_server_name is defined
+          - vpn_reality_short_id is defined
+          - vpn_hysteria_obfs is defined
+          - vpn_agent_token is defined
+          - vpn_reality_private_key is defined
+          - vpn_hysteria_tls_cert is defined
+          - vpn_hysteria_tls_key is defined
+          - vpn_agent_token | length > 0
+          - vpn_reality_private_key | length > 0
+          - vpn_hysteria_obfs | length > 0
+          - vpn_hysteria_tls_cert | length > 0
+          - vpn_hysteria_tls_key | length > 0
+        quiet: true
+      no_log: true
+
+    - name: Install Docker Compose and Git
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+          - git
+        state: present
+        update_cache: true
+
+    - name: Check out the requested immutable revision
+      ansible.builtin.git:
+        repo: "{{ vpn_repository_url }}"
+        dest: "{{ vpn_deploy_root_effective }}"
+        version: "{{ deploy_revision }}"
+        force: false
+
+    - name: Create private runtime directory
+      ansible.builtin.file:
+        path: "{{ vpn_deploy_root_effective }}/secrets"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Write public runtime environment
+      ansible.builtin.copy:
+        dest: "{{ vpn_deploy_root_effective }}/.env"
+        content: |
+          VPN_BACKEND_URL={{ vpn_backend_url }}
+          VPN_AGENT_MANAGEMENT_PORT={{ vpn_management_port | default(8443) }}
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Render runtime secret files
+      no_log: true
+      block:
+        - name: Write management bearer token
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/vpn-agent-token"
+            content: "{{ vpn_agent_token }}"
+            owner: "65532"
+            group: "65532"
+            mode: "0400"
+
+        - name: Render Xray config with REALITY private values
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/xray-config.json"
+            content: >-
+              {{
+                lookup('ansible.builtin.file', playbook_dir + '/../xray/config.json')
+                | replace('"__VPN_REALITY_TARGET__"', vpn_reality_target | to_json)
+                | replace('"__VPN_REALITY_SERVER_NAME__"', vpn_reality_server_name | to_json)
+                | replace('"__VPN_REALITY_PRIVATE_KEY__"', vpn_reality_private_key | to_json)
+                | replace('"__VPN_REALITY_SHORT_ID__"', vpn_reality_short_id | to_json)
+              }}
+            owner: "65532"
+            group: "65532"
+            mode: "0400"
+
+        - name: Render Hysteria config
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/hysteria-config.yaml"
+            content: >-
+              {{
+                lookup('ansible.builtin.file', playbook_dir + '/../hysteria/config.yaml')
+                | replace('"__VPN_HYSTERIA_OBFS__"', vpn_hysteria_obfs | to_json)
+              }}
+            owner: root
+            group: root
+            mode: "0400"
+
+        - name: Write Hysteria TLS certificate
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/hysteria-tls.crt"
+            content: "{{ vpn_hysteria_tls_cert }}"
+            owner: root
+            group: root
+            mode: "0400"
+
+        - name: Write Hysteria TLS private key
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/hysteria-tls.key"
+            content: "{{ vpn_hysteria_tls_key }}"
+            owner: root
+            group: root
+            mode: "0400"
+
+    - name: Pull pinned runtime images
+      ansible.builtin.command: docker compose pull
+      args:
+        chdir: "{{ vpn_deploy_root_effective }}"
+      changed_when: true
+
+    - name: Build agent at the requested revision
+      ansible.builtin.command: docker compose build --pull agent
+      args:
+        chdir: "{{ vpn_deploy_root_effective }}"
+      changed_when: true
+
+    - name: Apply runtime configuration
+      ansible.builtin.command: docker compose up -d --remove-orphans
+      args:
+        chdir: "{{ vpn_deploy_root_effective }}"
+      changed_when: true
