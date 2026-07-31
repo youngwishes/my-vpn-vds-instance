@@ -27,7 +27,7 @@ async def upsert_profile(
     profile_request: ProfileUpsertRequest,
     request: Request,
 ) -> dict[str, int]:
-    request.app.state.profile_store.upsert(
+    request.app.state.profile_service.upsert(
         profile=VPNProfile(
             access_id=access_id,
             vless_uuid=profile_request.vless_uuid,
@@ -39,5 +39,5 @@ async def upsert_profile(
 
 @router.delete("/{access_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_profile(access_id: int, request: Request) -> Response:
-    request.app.state.profile_store.delete(access_id=access_id)
+    request.app.state.profile_service.delete(access_id=access_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
