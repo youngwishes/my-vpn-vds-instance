@@ -14,7 +14,7 @@ services:
       XRAY_API_ADDRESS: xray:10085
       XRAY_VLESS_INBOUND_TAG: vless-reality
     ports:
-      - "127.0.0.1:${VPN_AGENT_MANAGEMENT_PORT:-8443}:8000/tcp"
+      - "${VPN_AGENT_BIND_ADDRESS:-127.0.0.1}:${VPN_AGENT_MANAGEMENT_PORT:-8443}:8000/tcp"
     expose:
       - "8000"
     secrets:

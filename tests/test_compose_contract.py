@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -17,7 +18,7 @@ IMAGE_BY_SERVICE = {
 }
 
 
-def _compose_config() -> dict[str, Any]:
+def _compose_config(*, environment: dict[str, str] | None = None) -> dict[str, Any]:
     result = subprocess.run(
         [
             "docker",
@@ -32,6 +33,7 @@ def _compose_config() -> dict[str, Any]:
         check=False,
         capture_output=True,
         text=True,
+        env={**os.environ, **(environment or {})},
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
@@ -88,6 +90,18 @@ def test_only_vpn_listeners_are_public_and_management_is_loopback_only() -> None
         ("xray", 443, "443", "tcp", "0.0.0.0"),
         ("hysteria", 443, "443", "udp", "0.0.0.0"),
     }
+
+
+def test_management_listener_can_bind_to_an_explicit_private_address() -> None:
+    config = _compose_config(environment={"VPN_AGENT_BIND_ADDRESS": "10.0.0.10"})
+    management_port = next(
+        port
+        for port in config["services"]["agent"]["ports"]
+        if port["target"] == 8000
+    )
+
+    assert management_port["host_ip"] == "10.0.0.10"
+    assert management_port["published"] == "8443"
 
 
 def test_control_endpoints_and_secret_files_stay_on_the_internal_network() -> None:

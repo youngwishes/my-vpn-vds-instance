@@ -11,9 +11,9 @@ VPN profiles.
   network.
 - Hysteria publishes UDP/443 and calls `http://agent:8000/auth` only on that
   network.
-- Agent management is bound to loopback on port 8443 by default. Remote access
-  must use an SSH tunnel or a TLS reverse proxy with an explicit network
-  allow-list.
+- Agent management defaults to loopback for local use. Production binds it to
+  an explicit private or overlay address; the deploy firewall admits only the
+  configured central backend CIDR. It is not a public TLS endpoint.
 - Credentials, REALITY private material, and Hysteria TLS material are mounted
   from files under `secrets/`; that directory is ignored by Git.
 
