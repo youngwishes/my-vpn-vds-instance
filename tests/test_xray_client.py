@@ -27,8 +27,12 @@ def test_handler_service_client_uses_real_cli_argv_and_private_temporary_config(
         if command[2] == "rmu":
             removals += 1
             if removals == 1:
-                return "User vpn-42 not found.\nRemoved 0 user(s) in total.\n"
-            return "Removed 1 user(s) in total.\n"
+                return (
+                    "remove user: vpn-42\n"
+                    "User vpn-42 not found.\n"
+                    "Removed 0 user(s) in total.\n"
+                )
+            return "remove user: vpn-42\nRemoved 1 user(s) in total.\n"
         return "1\n"
 
     client = HandlerServiceXrayClient(
@@ -112,7 +116,11 @@ def test_handler_service_client_rejects_zero_added_users_and_removes_temp_config
             assert config_path.exists()
             config_paths.append(config_path)
             return "Added 0 user(s) in total.\n"
-        return "User vpn-42 not found.\nRemoved 0 user(s) in total.\n"
+        return (
+            "remove user: vpn-42\n"
+            "User vpn-42 not found.\n"
+            "Removed 0 user(s) in total.\n"
+        )
 
     client = HandlerServiceXrayClient(
         api_address="127.0.0.1:10085",
@@ -130,11 +138,15 @@ def test_handler_service_client_rejects_zero_added_users_and_removes_temp_config
     assert not config_paths[0].exists()
 
 
-def test_handler_service_client_accepts_exact_absent_user_remove_response() -> None:
+def test_handler_service_client_accepts_exact_prefixed_absent_user_remove_response() -> None:
     client = HandlerServiceXrayClient(
         api_address="127.0.0.1:10085",
         inbound_tag="vless-reality",
-        command_runner=lambda _: "User vpn-42 not found.\nRemoved 0 user(s) in total.\n",
+        command_runner=lambda _: (
+            "remove user: vpn-42\n"
+            "User vpn-42 not found.\n"
+            "Removed 0 user(s) in total.\n"
+        ),
     )
 
     client.delete_user(access_id=42)
@@ -145,7 +157,10 @@ def test_handler_service_client_accepts_exact_absent_user_remove_response() -> N
     [
         "Removed 0 user(s) in total.\n",
         "rpc error: unavailable\nRemoved 0 user(s) in total.\n",
+        "User vpn-42 not found.\nRemoved 0 user(s) in total.\n",
         "User vpn-41 not found.\nRemoved 0 user(s) in total.\n",
+        "remove user: vpn-41\nUser vpn-42 not found.\nRemoved 0 user(s) in total.\n",
+        "remove user: vpn-42\nUser vpn-41 not found.\nRemoved 0 user(s) in total.\n",
     ],
 )
 def test_handler_service_client_rejects_unconfirmed_zero_user_remove(output: str) -> None:

@@ -58,6 +58,7 @@ class HandlerServiceXrayClient:
         if "Removed 1 user(s) in total." in output:
             return
         if output.strip().splitlines() == [
+            f"remove user: {email}",
             f"User {email} not found.",
             "Removed 0 user(s) in total.",
         ]:
