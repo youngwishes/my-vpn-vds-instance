@@ -44,16 +44,25 @@ class HandlerServiceXrayClient:
             raise RuntimeError("Xray did not add user")
 
     def delete_user(self, *, access_id: int) -> None:
-        self.command_runner(
+        email = self._email(access_id=access_id)
+        output = self.command_runner(
             (
                 "xray",
                 "api",
                 "rmu",
                 f"--server={self.api_address}",
                 f"-tag={self.inbound_tag}",
-                self._email(access_id=access_id),
+                email,
             )
         )
+        if "Removed 1 user(s) in total." in output:
+            return
+        if output.strip().splitlines() == [
+            f"User {email} not found.",
+            "Removed 0 user(s) in total.",
+        ]:
+            return
+        raise RuntimeError("Xray did not remove user")
 
     def health(self) -> None:
         self.command_runner(
