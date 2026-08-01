@@ -57,11 +57,22 @@ class HandlerServiceXrayClient:
         )
         if "Removed 1 user(s) in total." in output:
             return
-        if output.strip().splitlines() == [
-            f"remove user: {email}",
-            f"User {email} not found.",
-            "Removed 0 user(s) in total.",
-        ]:
+        absent_user_responses = (
+            [
+                f"remove user: {email}",
+                f"User {email} not found.",
+                "Removed 0 user(s) in total.",
+            ],
+            [
+                f"remove user: {email}",
+                (
+                    "rpc error: code = Unknown desc = proxy/vless: "
+                    f"User {email} not found."
+                ),
+                "Removed 0 user(s) in total.",
+            ],
+        )
+        if output.strip().splitlines() in absent_user_responses:
             return
         raise RuntimeError("Xray did not remove user")
 
