@@ -159,7 +159,7 @@ def test_control_endpoints_and_secret_files_stay_on_the_internal_network() -> No
         "management-proxy": {},
         "xray": {"xray_config": "/run/secrets/xray_config"},
         "hysteria": {
-            "hysteria_config": "/run/secrets/hysteria_config",
+            "hysteria_config": "/run/secrets/hysteria_config.yaml",
             "hysteria_tls_cert": "/run/secrets/hysteria_tls_cert",
             "hysteria_tls_key": "/run/secrets/hysteria_tls_key",
         },
@@ -176,6 +176,17 @@ def test_xray_declares_json_format_for_extensionless_secret() -> None:
         "-format=json",
         "-config",
         "/run/secrets/xray_config",
+    ]
+
+
+def test_hysteria_config_secret_keeps_yaml_extension() -> None:
+    config = _compose_config()
+
+    assert config["services"]["hysteria"]["command"] == [
+        "--disable-update-check",
+        "server",
+        "-c",
+        "/run/secrets/hysteria_config.yaml",
     ]
 
 
