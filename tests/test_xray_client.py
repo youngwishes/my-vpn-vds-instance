@@ -91,6 +91,7 @@ def test_handler_service_client_uses_real_cli_argv_and_private_temporary_config(
                         "port": 1,
                         "protocol": "vless",
                         "settings": {
+                            "decryption": "none",
                             "users": [
                                 {
                                     "id": "11111111-1111-1111-1111-111111111111",
