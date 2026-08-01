@@ -13,14 +13,17 @@ Compose stack.
 cp deploy/inventory.example.ini deploy/inventory.ini
 ```
 
-Укажите в нём `ansible_host`, SSH-пользователя и ключ. Публичные настройки при
-необходимости задаются в секции `[vpn:vars]`:
+Добавляйте серверы в `[vpn]`, указывая только alias и `ansible_host`. Общие
+SSH-параметры и публичные настройки задаются один раз в `[vpn:vars]`:
 
 ```ini
 [vpn]
-vpn-node ansible_host=192.0.2.10 ansible_user=root ansible_ssh_private_key_file=~/.ssh/id_ed25519_deploy
+vpn-1 ansible_host=192.0.2.10
+vpn-2 ansible_host=192.0.2.11
 
 [vpn:vars]
+ansible_user=root
+ansible_ssh_private_key_file=~/.ssh/id_ed25519_deploy
 vpn_certbot_email=admin@example.com
 ```
 

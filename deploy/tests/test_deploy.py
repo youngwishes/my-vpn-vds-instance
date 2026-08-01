@@ -278,6 +278,13 @@ def test_example_inventory_and_vars_have_no_real_server_or_credentials() -> None
     )
 
     assert re.search(r"(?:\d{1,3}\.){3}\d{1,3}", inventory) is None
+    assert "vpn-node ansible_host=vpn-node.example.invalid" in inventory
+    host_line = next(line for line in inventory.splitlines() if line.startswith("vpn-node "))
+    assert "ansible_user" not in host_line
+    assert "ansible_ssh_private_key_file" not in host_line
+    assert "[vpn:vars]" in inventory
+    assert "ansible_user=root" in inventory
+    assert "ansible_ssh_private_key_file=~/.ssh/id_ed25519_deploy" in inventory
     assert "vpn_agent_token" not in variables
     assert "private_key" not in variables
     assert "tls_key" not in variables
