@@ -7,7 +7,7 @@ files or environment contents.
 
 ```bash
 docker compose ps
-curl --fail --silent http://<public-bind>:8443/health
+curl --fail --silent http://<public-ip>:8443/health
 docker compose logs --since=15m management-proxy agent xray hysteria
 ```
 
@@ -22,11 +22,11 @@ docker compose restart agent
 
 ## Profile delivery
 
-Profile PUT and DELETE calls arrive through the path-restricted proxy at the
-public management bind. The MVP has no TLS or host firewall on this route; the
+Profile PUT and DELETE calls arrive through the path-restricted proxy published
+on all host interfaces. The MVP has no TLS or host firewall on this route; the
 accepted plaintext exposure is temporary. The matching central
 `VPNInstance.management_url` is
-`http://<public-bind>:<management-port>`. Hysteria auth continues
+`http://<public-ip>:<management-port>`. Hysteria auth continues
 to call `http://agent:8000/auth` inside the Compose control network. The agent
 has no host port, and the management proxy rejects `/auth` and every route or
 method outside its allowlist. Do not expose port 8000 or Xray gRPC port 10085.

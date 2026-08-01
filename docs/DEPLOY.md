@@ -11,13 +11,13 @@ deployment permission for the named SHA.
 2. Copy `deploy/group_vars/vpn.example.yml` to
    `deploy/group_vars/vpn.yml` and set repository URL, backend URL, REALITY
    target/SNI/short ID, and Hysteria obfuscation value. Set
-   `vpn_agent_bind_address` to the public IPv4 address already assigned to the
-   node.
+   `vpn_agent_bind_address` to `0.0.0.0`, so Docker publishes the management
+   listener on the node's public interface.
 3. Put `vpn_agent_token`, `vpn_reality_private_key`,
    `vpn_hysteria_tls_cert`, and `vpn_hysteria_tls_key` in an encrypted Ansible
    Vault vars file. Never pass them on the command line or store them in Git.
-4. The MVP playbook publishes the management proxy on the configured public
-   IPv4 address without TLS or a host firewall. Bearer authentication and the
+4. The MVP playbook publishes the management proxy on all host interfaces
+   without TLS or a host firewall. Bearer authentication and the
    proxy route allowlist remain enabled. The accepted risk is that management
    credentials and profile traffic cross the network in plaintext. The agent
    port, Xray gRPC, and Hysteria auth have no host publication; the proxy
