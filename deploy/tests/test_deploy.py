@@ -94,32 +94,15 @@ def test_example_inventory_and_vars_have_no_server_ip_or_credentials() -> None:
         assert re.search(rf"^{secret_name}\s*:", variables, re.MULTILINE) is None
 
     assert 'vpn_agent_bind_address: ""' in variables
-    assert 'vpn_backend_source_cidr: ""' in variables
+    assert "vpn_backend_source_cidr" not in variables
 
 
-def test_deploy_restricts_private_management_route_in_docker_user() -> None:
+def test_deploy_accepts_public_management_address_without_host_firewall() -> None:
     playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
 
     assert "ipaddress.ip_address" in playbook
-    assert "ipaddress.ip_network" in playbook
     assert "vpn_agent_bind_address" in playbook
-    assert "vpn_backend_source_cidr" in playbook
     assert "VPN_AGENT_BIND_ADDRESS={{ vpn_agent_bind_address }}" in playbook
-
-    allow = (
-        "iptables -A VPN_AGENT_MGMT -p tcp -s {{ vpn_backend_source_cidr }} "
-        "-m conntrack --ctdir ORIGINAL --ctorigdst {{ vpn_agent_bind_address }} "
-        "--ctorigdstport {{ vpn_management_port | default(8443) }} -j ACCEPT"
-    )
-    deny = (
-        "iptables -A VPN_AGENT_MGMT -p tcp -m conntrack "
-        "--ctdir ORIGINAL --ctorigdst {{ vpn_agent_bind_address }} "
-        "--ctorigdstport {{ vpn_management_port | default(8443) }} -j DROP"
-    )
-    assert allow in playbook
-    assert deny in playbook
-    assert playbook.index(allow) < playbook.index(deny)
-    assert "iptables -C DOCKER-USER -j VPN_AGENT_MGMT" in playbook
-    assert "iptables -I DOCKER-USER 1 -j VPN_AGENT_MGMT" in playbook
-    assert "After=docker.service" in playbook
-    assert "enabled: true" in playbook
+    assert "vpn_backend_source_cidr" not in playbook
+    assert "VPN_AGENT_MGMT" not in playbook
+    assert "vpn-agent-firewall" not in playbook
