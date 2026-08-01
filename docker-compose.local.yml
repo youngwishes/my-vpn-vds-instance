@@ -1,7 +1,7 @@
 services:
-  agent:
+  management-proxy:
     ports: !override
-      - "127.0.0.1:18000:8000/tcp"
+      - "127.0.0.1:18000:8080/tcp"
   xray:
     ports: !override
       - "127.0.0.1:18443:443/tcp"

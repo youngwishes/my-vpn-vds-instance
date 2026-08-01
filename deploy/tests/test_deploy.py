@@ -68,6 +68,15 @@ def test_deploy_renders_templates_from_the_checked_out_revision() -> None:
     assert "lookup('ansible.builtin.file'" not in playbook
 
 
+def test_deploy_uses_management_proxy_config_from_checked_out_revision() -> None:
+    playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "Check out the requested immutable revision" in playbook
+    assert "docker compose up -d --remove-orphans" in playbook
+    assert "./management-proxy/nginx.conf:/etc/nginx/nginx.conf:ro" in compose
+
+
 def test_example_inventory_and_vars_have_no_server_ip_or_credentials() -> None:
     inventory = (ROOT / "deploy/inventory.example.ini").read_text(encoding="utf-8")
     variables = (ROOT / "deploy/group_vars/vpn.example.yml").read_text(

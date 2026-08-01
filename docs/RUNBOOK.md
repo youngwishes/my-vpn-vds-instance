@@ -8,7 +8,7 @@ files or environment contents.
 ```bash
 docker compose ps
 curl --fail --silent http://<private-or-overlay-bind>:8443/health
-docker compose logs --since=15m agent xray hysteria
+docker compose logs --since=15m management-proxy agent xray hysteria
 systemctl status vpn-agent-firewall.service
 iptables -S VPN_AGENT_MGMT
 ```
@@ -24,12 +24,14 @@ docker compose restart agent
 
 ## Profile delivery
 
-Profile PUT and DELETE calls arrive at the private or overlay management bind;
-the Docker-aware host firewall allows only the configured central backend CIDR.
-The matching central `VPNInstance.management_url` is
-`http://<private-or-overlay-bind>:<management-port>`. Hysteria auth remains
-inside the Compose control network. Do not expose port 8000, Xray gRPC port
-10085, or the `/auth` route on a public interface.
+Profile PUT and DELETE calls arrive through the path-restricted proxy at the
+private or overlay management bind; the Docker-aware host firewall allows only
+the configured central backend CIDR. The matching central
+`VPNInstance.management_url` is
+`http://<private-or-overlay-bind>:<management-port>`. Hysteria auth continues
+to call `http://agent:8000/auth` inside the Compose control network. The agent
+has no host port, and the management proxy rejects `/auth` and every route or
+method outside its allowlist. Do not expose port 8000 or Xray gRPC port 10085.
 
 For a new node, keep the central `VPNInstance` inactive, run the repeatable
 central backfill, smoke-test both transports, and activate the node manually.

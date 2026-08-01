@@ -18,10 +18,12 @@ deployment permission for the named SHA.
    `vpn_hysteria_tls_cert`, and `vpn_hysteria_tls_key` in an encrypted Ansible
    Vault vars file. Never pass them on the command line or store them in Git.
 4. Ensure the host firewall admits only TCP/443 and UDP/443 publicly. The
-   playbook binds agent management to the configured private address and adds
-   an allow-before-deny `DOCKER-USER` rule using Docker DNAT's original
+   playbook binds the management proxy to the configured private address and
+   adds an allow-before-deny `DOCKER-USER` rule using Docker DNAT's original
    destination and port. The enabled systemd unit reapplies it after Docker on
-   reboot. Xray gRPC and Hysteria auth have no host publication.
+   reboot. The agent port, Xray gRPC, and Hysteria auth have no host
+   publication; the proxy forwards only the documented health and profile
+   management routes.
 
 Generate the REALITY key pair with the pinned Xray binary and retain only the
 private value in Vault. The matching public connection parameters belong in the
@@ -52,6 +54,7 @@ ansible-playbook -i deploy/inventory.ini deploy/playbook.yml \
 ```
 
 The playbook installs Docker Compose and Git, checks out that SHA, renders
-read-only secret files, pulls immutable runtime images, builds the agent, and
-applies Compose. It does not activate a Django `VPNInstance`; backfill, smoke,
-and manual activation remain central administrative steps.
+read-only secret files, uses the management proxy config from that checkout,
+pulls immutable runtime images, builds the agent, and applies Compose. It does
+not activate a Django `VPNInstance`; backfill, smoke, and manual activation
+remain central administrative steps.

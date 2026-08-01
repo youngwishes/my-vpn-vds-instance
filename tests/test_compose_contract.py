@@ -13,6 +13,10 @@ APPROVED_XRAY_IMAGE = (
     "ghcr.io/xtls/xray-core"
     "@sha256:a1644183accdb0b5be967093fe34be756fd5de15fe2ee0206e842ae17350967f"
 )
+APPROVED_MANAGEMENT_PROXY_IMAGE = (
+    "ghcr.io/nginx/nginx-unprivileged"
+    "@sha256:8122337ed6c475bb486bc9340da453d4599f225e6b920ff0d92ca2267486b9b5"
+)
 IMAGE_BY_SERVICE = {
     "hysteria": "docker.io/tobyxdd/hysteria",
 }
@@ -43,6 +47,10 @@ def test_runtime_images_are_immutable_and_agent_uses_the_same_xray_binary() -> N
     config = _compose_config()
 
     assert config["services"]["xray"]["image"] == APPROVED_XRAY_IMAGE
+    assert (
+        config["services"]["management-proxy"]["image"]
+        == APPROVED_MANAGEMENT_PROXY_IMAGE
+    )
     for service_name, repository in IMAGE_BY_SERVICE.items():
         image = config["services"][service_name]["image"]
         assert re.fullmatch(rf"{re.escape(repository)}@sha256:[0-9a-f]{{64}}", image)
@@ -71,7 +79,7 @@ def test_docker_build_context_excludes_local_credentials_and_caches() -> None:
     } <= ignored
 
 
-def test_only_vpn_listeners_are_public_and_management_is_loopback_only() -> None:
+def test_only_proxy_publishes_loopback_management_and_agent_stays_internal() -> None:
     config = _compose_config()
     published_ports = {
         (
@@ -86,18 +94,19 @@ def test_only_vpn_listeners_are_public_and_management_is_loopback_only() -> None
     }
 
     assert published_ports == {
-        ("agent", 8000, "8443", "tcp", "127.0.0.1"),
+        ("management-proxy", 8080, "8443", "tcp", "127.0.0.1"),
         ("xray", 443, "443", "tcp", "0.0.0.0"),
         ("hysteria", 443, "443", "udp", "0.0.0.0"),
     }
+    assert config["services"]["agent"].get("ports", []) == []
 
 
 def test_management_listener_can_bind_to_an_explicit_private_address() -> None:
     config = _compose_config(environment={"VPN_AGENT_BIND_ADDRESS": "10.0.0.10"})
     management_port = next(
         port
-        for port in config["services"]["agent"]["ports"]
-        if port["target"] == 8000
+        for port in config["services"]["management-proxy"]["ports"]
+        if port["target"] == 8080
     )
 
     assert management_port["host_ip"] == "10.0.0.10"
@@ -110,6 +119,7 @@ def test_control_endpoints_and_secret_files_stay_on_the_internal_network() -> No
 
     assert config["networks"]["control"]["internal"] is True
     assert set(services["agent"]["networks"]) == {"control", "agent_egress"}
+    assert set(services["management-proxy"]["networks"]) == {"control"}
     assert set(services["xray"]["networks"]) == {"control", "xray_egress"}
     assert set(services["hysteria"]["networks"]) == {
         "control",
@@ -125,6 +135,7 @@ def test_control_endpoints_and_secret_files_stay_on_the_internal_network() -> No
     }
     assert secret_targets == {
         "agent": {"vpn_agent_token": "/run/secrets/vpn_agent_token"},
+        "management-proxy": {},
         "xray": {"xray_config": "/run/secrets/xray_config"},
         "hysteria": {
             "hysteria_config": "/run/secrets/hysteria_config",
@@ -133,3 +144,37 @@ def test_control_endpoints_and_secret_files_stay_on_the_internal_network() -> No
         },
     }
     assert "VPN_AGENT_TOKEN" not in services["agent"].get("environment", {})
+    assert services["management-proxy"].get("secrets", []) == []
+
+
+def test_local_override_keeps_agent_internal_and_publishes_only_proxy() -> None:
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            "docker-compose.yml",
+            "-f",
+            "docker-compose.local.yml",
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    config = json.loads(result.stdout)
+
+    assert config["services"]["agent"].get("ports", []) == []
+    assert config["services"]["management-proxy"]["ports"] == [
+        {
+            "mode": "ingress",
+            "target": 8080,
+            "published": "18000",
+            "protocol": "tcp",
+            "host_ip": "127.0.0.1",
+        }
+    ]
