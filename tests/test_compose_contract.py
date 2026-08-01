@@ -168,6 +168,17 @@ def test_control_endpoints_and_secret_files_stay_on_the_internal_network() -> No
     assert services["management-proxy"].get("secrets", []) == []
 
 
+def test_xray_declares_json_format_for_extensionless_secret() -> None:
+    config = _compose_config()
+
+    assert config["services"]["xray"]["command"] == [
+        "run",
+        "-format=json",
+        "-config",
+        "/run/secrets/xray_config",
+    ]
+
+
 def test_local_override_keeps_agent_internal_and_publishes_only_proxy() -> None:
     result = subprocess.run(
         [
