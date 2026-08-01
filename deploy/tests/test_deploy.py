@@ -115,6 +115,112 @@ def test_node_secret_generator_creates_once_and_preserves_existing_material(
     ] == "private-first"
 
 
+def test_node_secret_generator_adopts_complete_legacy_runtime(tmp_path: Path) -> None:
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "xray-config.json").write_text(
+        json.dumps(
+            {
+                "inbounds": [
+                    {
+                        "tag": "vless-reality",
+                        "streamSettings": {
+                            "realitySettings": {
+                                "privateKey": "legacy-private",
+                                "shortIds": ["aabbccddeeff0011"],
+                            }
+                        }
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (secrets_dir / "hysteria-config.yaml").write_text(
+        json.dumps(
+            {
+                "obfs": {
+                    "type": "salamander",
+                    "salamander": {"password": "legacy obfs / value"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker.log"
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$*\" > \"$DOCKER_LOG\"\n"
+        "printf '%s\\n' 'Password (PublicKey): legacy-public' 'Hash32: ignored'\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    openssl = bin_dir / "openssl"
+    openssl.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    openssl.chmod(0o755)
+
+    result = _run_script(
+        ROOT / "deploy/files/generate-node-secrets",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "VPN_SECRETS_DIR": str(secrets_dir),
+            "XRAY_IMAGE": "example.invalid/xray@sha256:test",
+            "DOCKER_LOG": str(docker_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    state_path = secrets_dir / "node-secrets.json"
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "hysteria_obfs": "legacy obfs / value",
+        "reality_private_key": "legacy-private",
+        "reality_public_key": "legacy-public",
+        "reality_short_id": "aabbccddeeff0011",
+    }
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+    assert docker_log.read_text(encoding="utf-8") == (
+        "run --rm example.invalid/xray@sha256:test "
+        "x25519 -i legacy-private\n"
+    )
+
+
+def test_node_secret_generator_rejects_partial_legacy_runtime(tmp_path: Path) -> None:
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "xray-config.json").write_text("{}", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'PrivateKey: unexpected-private' "
+        "'Password (PublicKey): unexpected-public'\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    openssl = bin_dir / "openssl"
+    openssl.write_text(
+        "#!/bin/sh\nprintf '%s\\n' '0011223344556677'\n",
+        encoding="utf-8",
+    )
+    openssl.chmod(0o755)
+
+    result = _run_script(
+        ROOT / "deploy/files/generate-node-secrets",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "VPN_SECRETS_DIR": str(secrets_dir),
+            "XRAY_IMAGE": "example.invalid/xray@sha256:test",
+        },
+    )
+
+    assert result.returncode != 0
+    assert not (secrets_dir / "node-secrets.json").exists()
+
+
 def test_certificate_deploy_hook_installs_renewed_files_and_recreates_hysteria(
     tmp_path: Path,
 ) -> None:

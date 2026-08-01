@@ -64,7 +64,8 @@ Playbook:
 1. проверяет публичный IPv4 и разрешение соответствующего `sslip.io` hostname;
 2. устанавливает Docker Compose, Git, OpenSSL и Certbot;
 3. клонирует или обновляет `main` из GitHub в `/opt/vpn-node`;
-4. один раз создаёт уникальные node-specific REALITY и Hysteria параметры;
+4. один раз создаёт уникальные node-specific параметры либо безопасно импортирует
+   их из существующего legacy runtime;
 5. получает отдельный Let's Encrypt сертификат через HTTP-01 на TCP/80;
 6. рендерит runtime-файлы с закрытыми правами;
 7. запускает Compose и ожидает успешный `/health`;
@@ -72,6 +73,23 @@ Playbook:
 
 Повторный запуск обновляет приложение, но сохраняет node-specific ключи в
 `/opt/vpn-node/secrets/node-secrets.json`.
+
+## Миграция legacy-ноды
+
+Работающую ноду старого формата можно добавить в тот же inventory и развернуть
+обычной командой. Если `node-secrets.json` ещё отсутствует, но присутствуют оба
+старых runtime-файла `secrets/xray-config.json` и
+`secrets/hysteria-config.yaml`, playbook:
+
+1. импортирует текущие REALITY private key, short ID и Hysteria obfs;
+2. вычисляет соответствующий REALITY public key pinned Xray binary;
+3. атомарно создаёт `node-secrets.json` с mode `0600`;
+4. продолжает обычный deploy без ротации transport-параметров.
+
+Если найден только один legacy-файл или структура конфигурации невалидна,
+деплой останавливается до изменения runtime. После первой миграции сравните
+выведенные public key, short ID и obfs с существующей `VPNInstance` в backend и
+выполните smoke-check обоих протоколов.
 
 ## Сертификат и renewal
 

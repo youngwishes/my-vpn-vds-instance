@@ -121,7 +121,7 @@
         mode: "0400"
       no_log: true
 
-    - name: Generate persistent node-specific transport material
+    - name: Generate or adopt persistent node-specific transport material
       ansible.builtin.command:
         argv:
           - env
