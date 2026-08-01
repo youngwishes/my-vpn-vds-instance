@@ -1,0 +1,117 @@
+name: vpn-node
+
+services:
+  management-proxy:
+    image: ghcr.io/nginx/nginx-unprivileged@sha256:8122337ed6c475bb486bc9340da453d4599f225e6b920ff0d92ca2267486b9b5
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "${VPN_AGENT_BIND_ADDRESS:-127.0.0.1}:${VPN_AGENT_MANAGEMENT_PORT:-8443}:8080/tcp"
+    volumes:
+      - ./management-proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - control
+    depends_on:
+      agent:
+        condition: service_started
+
+  agent:
+    build:
+      context: .
+      target: agent
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      VPN_BACKEND_URL: ${VPN_BACKEND_URL:-https://backend.example.invalid}
+      XRAY_API_ADDRESS: xray:10085
+      XRAY_VLESS_INBOUND_TAG: vless-reality
+    expose:
+      - "8000"
+    secrets:
+      - source: vpn_agent_token
+        target: vpn_agent_token
+        mode: "0400"
+    networks:
+      - control
+      - agent_egress
+    depends_on:
+      xray:
+        condition: service_healthy
+
+  xray:
+    image: ghcr.io/xtls/xray-core@sha256:a1644183accdb0b5be967093fe34be756fd5de15fe2ee0206e842ae17350967f
+    restart: unless-stopped
+    read_only: true
+    command: ["run", "-config", "/run/secrets/xray_config"]
+    ports:
+      - "0.0.0.0:443:443/tcp"
+    expose:
+      - "10085"
+    secrets:
+      - source: xray_config
+        target: xray_config
+        mode: "0400"
+    networks:
+      - control
+      - xray_egress
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "xray",
+          "api",
+          "inboundusercount",
+          "--server=127.0.0.1:10085",
+          "-tag=vless-reality",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  hysteria:
+    image: docker.io/tobyxdd/hysteria@sha256:97a8deb6c57765a72d4251420481dc8124222590d8e1b5af564e0858859cfe09
+    restart: unless-stopped
+    read_only: true
+    command:
+      ["--disable-update-check", "server", "-c", "/run/secrets/hysteria_config"]
+    ports:
+      - "0.0.0.0:443:443/udp"
+    secrets:
+      - source: hysteria_config
+        target: hysteria_config
+        mode: "0400"
+      - source: hysteria_tls_cert
+        target: hysteria_tls_cert
+        mode: "0400"
+      - source: hysteria_tls_key
+        target: hysteria_tls_key
+        mode: "0400"
+    networks:
+      - control
+      - hysteria_egress
+    depends_on:
+      agent:
+        condition: service_started
+
+networks:
+  control:
+    internal: true
+  agent_egress: {}
+  xray_egress: {}
+  hysteria_egress: {}
+
+secrets:
+  vpn_agent_token:
+    file: ./secrets/vpn-agent-token
+  xray_config:
+    file: ./secrets/xray-config.json
+  hysteria_config:
+    file: ./secrets/hysteria-config.yaml
+  hysteria_tls_cert:
+    file: ./secrets/hysteria-tls.crt
+  hysteria_tls_key:
+    file: ./secrets/hysteria-tls.key

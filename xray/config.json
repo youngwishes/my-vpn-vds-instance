@@ -1,0 +1,46 @@
+{
+  "log": {
+    "access": "none",
+    "loglevel": "warning"
+  },
+  "api": {
+    "tag": "api",
+    "listen": "0.0.0.0:10085",
+    "services": [
+      "HandlerService"
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "vless-reality",
+      "listen": "0.0.0.0",
+      "port": 443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "target": "__VPN_REALITY_TARGET__",
+          "serverNames": [
+            "__VPN_REALITY_SERVER_NAME__"
+          ],
+          "privateKey": "__VPN_REALITY_PRIVATE_KEY__",
+          "shortIds": [
+            "__VPN_REALITY_SHORT_ID__"
+          ]
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "direct",
+      "protocol": "freedom"
+    }
+  ]
+}

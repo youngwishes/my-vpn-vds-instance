@@ -1,0 +1,235 @@
+---
+- name: Deploy VPN node runtime
+  hosts: vpn
+  become: true
+  vars:
+    vpn_deploy_root_effective: "{{ vpn_deploy_root | default('/opt/vpn-node') }}"
+
+  tasks:
+    - name: Validate immutable revision and required runtime values
+      ansible.builtin.assert:
+        that:
+          - deploy_revision is defined
+          - deploy_revision | length == 40
+          - vpn_repository_url is defined
+          - vpn_backend_url is defined
+          - vpn_agent_bind_address is defined
+          - vpn_agent_bind_address | length > 0
+          - vpn_backend_source_cidr is defined
+          - vpn_backend_source_cidr | length > 0
+          - (vpn_management_port | default(8443) | int) > 0
+          - (vpn_management_port | default(8443) | int) < 65536
+          - vpn_reality_target is defined
+          - vpn_reality_server_name is defined
+          - vpn_reality_short_id is defined
+          - vpn_hysteria_obfs is defined
+          - vpn_agent_token is defined
+          - vpn_reality_private_key is defined
+          - vpn_hysteria_tls_cert is defined
+          - vpn_hysteria_tls_key is defined
+          - vpn_agent_token | length > 0
+          - vpn_reality_private_key | length > 0
+          - vpn_hysteria_obfs | length > 0
+          - vpn_hysteria_tls_cert | length > 0
+          - vpn_hysteria_tls_key | length > 0
+        quiet: true
+      no_log: true
+
+    - name: Validate private management network values
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import ipaddress
+            import sys
+
+            allowed = tuple(
+                ipaddress.ip_network(network)
+                for network in (
+                    "10.0.0.0/8",
+                    "172.16.0.0/12",
+                    "192.168.0.0/16",
+                    "100.64.0.0/10",
+                )
+            )
+            bind = ipaddress.ip_address(sys.argv[1])
+            if "/" not in sys.argv[2]:
+                raise ValueError("backend source must be a CIDR")
+            source = ipaddress.ip_network(sys.argv[2], strict=True)
+            if bind.version != 4 or not any(bind in network for network in allowed):
+                raise ValueError("management bind must be private or overlay IPv4")
+            if source.version != 4 or not any(
+                source.subnet_of(network) for network in allowed
+            ):
+                raise ValueError("backend source must be private or overlay IPv4 CIDR")
+          - "{{ vpn_agent_bind_address }}"
+          - "{{ vpn_backend_source_cidr }}"
+      changed_when: false
+
+    - name: Install Docker Compose and Git
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+          - git
+          - iptables
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker daemon is available
+      ansible.builtin.systemd_service:
+        name: docker.service
+        enabled: true
+        state: started
+
+    - name: Check out the requested immutable revision
+      ansible.builtin.git:
+        repo: "{{ vpn_repository_url }}"
+        dest: "{{ vpn_deploy_root_effective }}"
+        version: "{{ deploy_revision }}"
+        force: false
+
+    - name: Read Xray template from the requested revision
+      ansible.builtin.slurp:
+        src: "{{ vpn_deploy_root_effective }}/xray/config.json"
+      register: xray_template
+
+    - name: Read Hysteria template from the requested revision
+      ansible.builtin.slurp:
+        src: "{{ vpn_deploy_root_effective }}/hysteria/config.yaml"
+      register: hysteria_template
+
+    - name: Create private runtime directory
+      ansible.builtin.file:
+        path: "{{ vpn_deploy_root_effective }}/secrets"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Write public runtime environment
+      ansible.builtin.copy:
+        dest: "{{ vpn_deploy_root_effective }}/.env"
+        content: |
+          VPN_BACKEND_URL={{ vpn_backend_url }}
+          VPN_AGENT_BIND_ADDRESS={{ vpn_agent_bind_address }}
+          VPN_AGENT_MANAGEMENT_PORT={{ vpn_management_port | default(8443) }}
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Render runtime secret files
+      no_log: true
+      block:
+        - name: Write management bearer token
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/vpn-agent-token"
+            content: "{{ vpn_agent_token }}"
+            owner: "65532"
+            group: "65532"
+            mode: "0400"
+
+        - name: Render Xray config with REALITY private values
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/xray-config.json"
+            content: >-
+              {{
+                xray_template.content | b64decode
+                | replace('"__VPN_REALITY_TARGET__"', vpn_reality_target | to_json)
+                | replace('"__VPN_REALITY_SERVER_NAME__"', vpn_reality_server_name | to_json)
+                | replace('"__VPN_REALITY_PRIVATE_KEY__"', vpn_reality_private_key | to_json)
+                | replace('"__VPN_REALITY_SHORT_ID__"', vpn_reality_short_id | to_json)
+              }}
+            owner: "65532"
+            group: "65532"
+            mode: "0400"
+
+        - name: Render Hysteria config
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/hysteria-config.yaml"
+            content: >-
+              {{
+                hysteria_template.content | b64decode
+                | replace('"__VPN_HYSTERIA_OBFS__"', vpn_hysteria_obfs | to_json)
+              }}
+            owner: root
+            group: root
+            mode: "0400"
+
+        - name: Write Hysteria TLS certificate
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/hysteria-tls.crt"
+            content: "{{ vpn_hysteria_tls_cert }}"
+            owner: root
+            group: root
+            mode: "0400"
+
+        - name: Write Hysteria TLS private key
+          ansible.builtin.copy:
+            dest: "{{ vpn_deploy_root_effective }}/secrets/hysteria-tls.key"
+            content: "{{ vpn_hysteria_tls_key }}"
+            owner: root
+            group: root
+            mode: "0400"
+
+    - name: Write Docker management firewall script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/vpn-agent-firewall
+        content: |
+          #!/bin/sh
+          set -eu
+          iptables -N VPN_AGENT_MGMT 2>/dev/null || true
+          iptables -F VPN_AGENT_MGMT
+          iptables -A VPN_AGENT_MGMT -p tcp -s {{ vpn_backend_source_cidr }} -m conntrack --ctdir ORIGINAL --ctorigdst {{ vpn_agent_bind_address }} --ctorigdstport {{ vpn_management_port | default(8443) }} -j ACCEPT
+          iptables -A VPN_AGENT_MGMT -p tcp -m conntrack --ctdir ORIGINAL --ctorigdst {{ vpn_agent_bind_address }} --ctorigdstport {{ vpn_management_port | default(8443) }} -j DROP
+          iptables -A VPN_AGENT_MGMT -j RETURN
+          iptables -C DOCKER-USER -j VPN_AGENT_MGMT 2>/dev/null || iptables -I DOCKER-USER 1 -j VPN_AGENT_MGMT
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write persistent Docker management firewall service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/vpn-agent-firewall.service
+        content: |
+          [Unit]
+          Description=Restrict VPN agent Docker management port
+          Requires=docker.service
+          After=docker.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/vpn-agent-firewall
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Apply persistent Docker management firewall
+      ansible.builtin.systemd_service:
+        name: vpn-agent-firewall.service
+        daemon_reload: true
+        enabled: true
+        state: restarted
+
+    - name: Pull pinned runtime images
+      ansible.builtin.command: docker compose pull
+      args:
+        chdir: "{{ vpn_deploy_root_effective }}"
+      changed_when: true
+
+    - name: Build agent at the requested revision
+      ansible.builtin.command: docker compose build --pull agent
+      args:
+        chdir: "{{ vpn_deploy_root_effective }}"
+      changed_when: true
+
+    - name: Apply runtime configuration
+      ansible.builtin.command: docker compose up -d --remove-orphans
+      args:
+        chdir: "{{ vpn_deploy_root_effective }}"
+      changed_when: true

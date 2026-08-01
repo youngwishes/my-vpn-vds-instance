@@ -1,0 +1,17 @@
+vpn_repository_url: https://github.com/OWNER/my-vpn-vds-instance.git
+vpn_deploy_root: /opt/vpn-node
+vpn_backend_url: https://backend.example.invalid
+vpn_agent_bind_address: ""
+vpn_backend_source_cidr: ""
+vpn_management_port: 8443
+vpn_reality_target: example.com:443
+vpn_reality_server_name: example.com
+
+# Define these public connection parameters for the matching VPNInstance.
+vpn_reality_short_id: ""
+vpn_hysteria_obfs: ""
+
+# Store vpn_agent_token, vpn_reality_private_key, vpn_hysteria_tls_cert and
+# vpn_hysteria_tls_key in an encrypted Ansible Vault vars file, not here.
+# Set VPNInstance.management_url to
+# http://<vpn_agent_bind_address>:<vpn_management_port> after deploy.

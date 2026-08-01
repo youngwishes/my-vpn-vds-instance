@@ -1,0 +1,19 @@
+{
+  "listen": ":443",
+  "tls": {
+    "cert": "/run/secrets/hysteria_tls_cert",
+    "key": "/run/secrets/hysteria_tls_key"
+  },
+  "auth": {
+    "type": "http",
+    "http": {
+      "url": "http://agent:8000/auth"
+    }
+  },
+  "obfs": {
+    "type": "salamander",
+    "salamander": {
+      "password": "__VPN_HYSTERIA_OBFS__"
+    }
+  }
+}
