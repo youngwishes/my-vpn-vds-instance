@@ -1,6 +1,6 @@
 FROM ghcr.io/xtls/xray-core@sha256:a1644183accdb0b5be967093fe34be756fd5de15fe2ee0206e842ae17350967f AS xray
 FROM ghcr.io/astral-sh/uv@sha256:15f68a476b768083505fe1dbfcc998344d0135f0ca1b8465c4760b323904f05a AS uv
-FROM docker.io/library/python@sha256:1a3c6dbfd2173971abba880c3cc2ec4643690901f6ad6742d0827bae6cefc925 AS agent
+FROM docker.io/library/python@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91 AS agent
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \

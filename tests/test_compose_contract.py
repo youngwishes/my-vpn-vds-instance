@@ -4,11 +4,17 @@ import json
 import os
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+APPROVED_PYTHON_VERSION = "3.13"
+APPROVED_PYTHON_IMAGE = (
+    "docker.io/library/python"
+    "@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91"
+)
 APPROVED_XRAY_IMAGE = (
     "ghcr.io/xtls/xray-core"
     "@sha256:a1644183accdb0b5be967093fe34be756fd5de15fe2ee0206e842ae17350967f"
@@ -20,6 +26,19 @@ APPROVED_MANAGEMENT_PROXY_IMAGE = (
 IMAGE_BY_SERVICE = {
     "hysteria": "docker.io/tobyxdd/hysteria",
 }
+
+
+def test_python_toolchain_and_runtime_match_approved_version() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert (ROOT / ".python-version").read_text(encoding="utf-8").strip() == (
+        APPROVED_PYTHON_VERSION
+    )
+    assert project["project"]["requires-python"] == f">={APPROVED_PYTHON_VERSION}"
+    assert lock["requires-python"] == project["project"]["requires-python"]
+    assert f"FROM {APPROVED_PYTHON_IMAGE} AS agent" in dockerfile
 
 
 def _compose_config(*, environment: dict[str, str] | None = None) -> dict[str, Any]:
