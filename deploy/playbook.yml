@@ -145,10 +145,21 @@
     - name: Validate generated transport material
       ansible.builtin.assert:
         that:
+          - vpn_node_secrets.reality_private_key is string
           - vpn_node_secrets.reality_private_key | length > 0
+          - vpn_node_secrets.reality_public_key is string
           - vpn_node_secrets.reality_public_key | length > 0
-          - vpn_node_secrets.reality_short_id | length == 16
-          - vpn_node_secrets.hysteria_obfs | length == 64
+          - vpn_node_secrets.reality_short_id is string
+          - vpn_node_secrets.reality_short_id | length <= 16
+          - (vpn_node_secrets.reality_short_id | length) % 2 == 0
+          - >-
+            (
+              vpn_node_secrets.reality_short_id
+              | regex_replace('[0-9a-fA-F]', '')
+              | length
+            ) == 0
+          - vpn_node_secrets.hysteria_obfs is string
+          - vpn_node_secrets.hysteria_obfs | length > 0
         quiet: true
       no_log: true
 
