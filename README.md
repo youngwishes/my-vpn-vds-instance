@@ -16,7 +16,7 @@ VPN profiles.
   `DELETE /api/v1/profiles/<id>` to the agent. In particular, it never forwards
   `/auth`.
 - Management ingress defaults to loopback for local use. For the MVP,
-  production binds it to the node's public IPv4 address without a host
+  production binds it to all host interfaces (`0.0.0.0`) without a host
   firewall or TLS. Bearer authentication and the proxy route allowlist remain
   enabled; the accepted plaintext exposure risk is tracked as an MVP boundary.
 - Credentials, REALITY private material, and Hysteria TLS material are mounted

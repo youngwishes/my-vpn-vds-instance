@@ -140,7 +140,11 @@ def test_control_endpoints_and_secret_files_stay_on_the_internal_network() -> No
 
     assert config["networks"]["control"]["internal"] is True
     assert set(services["agent"]["networks"]) == {"control", "agent_egress"}
-    assert set(services["management-proxy"]["networks"]) == {"control"}
+    assert set(services["management-proxy"]["networks"]) == {
+        "control",
+        "management_egress",
+    }
+    assert config["networks"]["management_egress"].get("internal", False) is False
     assert set(services["xray"]["networks"]) == {"control", "xray_egress"}
     assert set(services["hysteria"]["networks"]) == {
         "control",
