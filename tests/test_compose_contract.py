@@ -120,15 +120,17 @@ def test_only_proxy_publishes_loopback_management_and_agent_stays_internal() -> 
     assert config["services"]["agent"].get("ports", []) == []
 
 
-def test_management_listener_can_bind_to_an_explicit_private_address() -> None:
-    config = _compose_config(environment={"VPN_AGENT_BIND_ADDRESS": "10.0.0.10"})
+def test_management_listener_can_bind_to_an_explicit_public_address() -> None:
+    config = _compose_config(
+        environment={"VPN_AGENT_BIND_ADDRESS": "203.0.113.10"}
+    )
     management_port = next(
         port
         for port in config["services"]["management-proxy"]["ports"]
         if port["target"] == 8080
     )
 
-    assert management_port["host_ip"] == "10.0.0.10"
+    assert management_port["host_ip"] == "203.0.113.10"
     assert management_port["published"] == "8443"
 
 

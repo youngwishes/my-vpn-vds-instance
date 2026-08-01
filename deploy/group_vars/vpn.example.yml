@@ -2,7 +2,6 @@ vpn_repository_url: https://github.com/OWNER/my-vpn-vds-instance.git
 vpn_deploy_root: /opt/vpn-node
 vpn_backend_url: https://backend.example.invalid
 vpn_agent_bind_address: ""
-vpn_backend_source_cidr: ""
 vpn_management_port: 8443
 vpn_reality_target: example.com:443
 vpn_reality_server_name: example.com

@@ -15,9 +15,10 @@ VPN profiles.
   the only management ingress and forwards only `GET /health` plus `PUT` and
   `DELETE /api/v1/profiles/<id>` to the agent. In particular, it never forwards
   `/auth`.
-- Management ingress defaults to loopback for local use. Production binds it
-  to an explicit private or overlay address; the deploy firewall admits only
-  the configured central backend CIDR. It is not a public TLS endpoint.
+- Management ingress defaults to loopback for local use. For the MVP,
+  production binds it to the node's public IPv4 address without a host
+  firewall or TLS. Bearer authentication and the proxy route allowlist remain
+  enabled; the accepted plaintext exposure risk is tracked as an MVP boundary.
 - Credentials, REALITY private material, and Hysteria TLS material are mounted
   from files under `secrets/`; that directory is ignored by Git.
 

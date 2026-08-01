@@ -7,10 +7,8 @@ files or environment contents.
 
 ```bash
 docker compose ps
-curl --fail --silent http://<private-or-overlay-bind>:8443/health
+curl --fail --silent http://<public-bind>:8443/health
 docker compose logs --since=15m management-proxy agent xray hysteria
-systemctl status vpn-agent-firewall.service
-iptables -S VPN_AGENT_MGMT
 ```
 
 Healthy agent startup means the one-time Django bootstrap completed and the
@@ -25,10 +23,10 @@ docker compose restart agent
 ## Profile delivery
 
 Profile PUT and DELETE calls arrive through the path-restricted proxy at the
-private or overlay management bind; the Docker-aware host firewall allows only
-the configured central backend CIDR. The matching central
+public management bind. The MVP has no TLS or host firewall on this route; the
+accepted plaintext exposure is temporary. The matching central
 `VPNInstance.management_url` is
-`http://<private-or-overlay-bind>:<management-port>`. Hysteria auth continues
+`http://<public-bind>:<management-port>`. Hysteria auth continues
 to call `http://agent:8000/auth` inside the Compose control network. The agent
 has no host port, and the management proxy rejects `/auth` and every route or
 method outside its allowlist. Do not expose port 8000 or Xray gRPC port 10085.
