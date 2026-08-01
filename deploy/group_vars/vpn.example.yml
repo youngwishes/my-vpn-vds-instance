@@ -1,16 +1,10 @@
-vpn_repository_url: https://github.com/OWNER/my-vpn-vds-instance.git
-vpn_deploy_root: /opt/vpn-node
+# Optional public overrides. The defaults match the current production backend.
 vpn_backend_url: https://backend.example.invalid
-vpn_agent_bind_address: ""
-vpn_management_port: 8443
 vpn_reality_target: example.com:443
 vpn_reality_server_name: example.com
+vpn_certbot_email: admin@example.invalid
 
-# Define these public connection parameters for the matching VPNInstance.
-vpn_reality_short_id: ""
-vpn_hysteria_obfs: ""
-
-# Store vpn_agent_token, vpn_reality_private_key, vpn_hysteria_tls_cert and
-# vpn_hysteria_tls_key in an encrypted Ansible Vault vars file, not here.
-# Set VPNInstance.management_url to
-# http://<vpn_agent_bind_address>:<vpn_management_port> after deploy.
+# The playbook derives the public IPv4 from ansible_host and issues a certificate
+# for <dash-separated-ip>.sslip.io. Override only when using another hostname.
+# vpn_public_ipv4: 192.0.2.10
+# vpn_hysteria_domain: 192-0-2-10.sslip.io

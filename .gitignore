@@ -3,5 +3,7 @@
 .superpowers/
 .env
 secrets/
+deploy/inventory.ini
+deploy/secrets/
 __pycache__/
 *.py[cod]

@@ -38,3 +38,7 @@ production credentials for local validation.
 Deployment preparation and release gates are documented in
 [`docs/DEPLOY.md`](docs/DEPLOY.md). Operational checks are in
 [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+
+Production deployment is one inventory-driven Ansible command. The node pulls
+the application from GitHub, creates persistent node-specific transport keys,
+and configures automatic Let's Encrypt renewal for its `sslip.io` hostname.

@@ -1,57 +1,103 @@
-# Deploy
+# Деплой VPN-ноды
 
-The playbook deploys one exact Git revision and never performs merge, rollback,
-or product activation. Run it only after the repository release gate grants
-deployment permission for the named SHA.
+Приложение доставляется на сервер напрямую из публичного GitHub-репозитория.
+Один playbook устанавливает системные зависимости, обновляет ветку `main`,
+создаёт постоянные ключи новой ноды, получает TLS-сертификат и запускает
+Compose stack.
 
-## Inputs
+## Однократная локальная настройка
 
-1. Copy `deploy/inventory.example.ini` to an untracked inventory and replace the
-   reserved example hostname.
-2. Copy `deploy/group_vars/vpn.example.yml` to
-   `deploy/group_vars/vpn.yml` and set repository URL, backend URL, REALITY
-   target/SNI/short ID, and Hysteria obfuscation value. Set
-   `vpn_agent_bind_address` to `0.0.0.0`, so Docker publishes the management
-   listener on the node's public interface.
-3. Put `vpn_agent_token`, `vpn_reality_private_key`,
-   `vpn_hysteria_tls_cert`, and `vpn_hysteria_tls_key` in an encrypted Ansible
-   Vault vars file. Never pass them on the command line or store them in Git.
-4. The MVP playbook publishes the management proxy on all host interfaces
-   without TLS or a host firewall. Bearer authentication and the
-   proxy route allowlist remain enabled. The accepted risk is that management
-   credentials and profile traffic cross the network in plaintext. The agent
-   port, Xray gRPC, and Hysteria auth have no host publication; the proxy
-   forwards only the documented health and profile management routes.
-
-Generate the REALITY key pair with the pinned Xray binary and retain only the
-private value in Vault. The matching public connection parameters belong in the
-central `VPNInstance`. Supply a certificate and private key matching the
-Hysteria SNI.
-
-After deployment, set the central `VPNInstance.management_url` to
-`http://<public-bind>:<management-port>`.
-
-## Checks and deployment
-
-Before the release gate:
+Скопируйте пример inventory в исключённый из Git файл:
 
 ```bash
-uv run pytest
-uv lock --check
-docker compose -f docker-compose.yml config --quiet
-ansible-playbook -i deploy/inventory.example.ini deploy/playbook.yml --syntax-check
+cp deploy/inventory.example.ini deploy/inventory.ini
 ```
 
-After explicit deploy authorization, substitute the private inventory and the
-approved 40-character release SHA:
+Укажите в нём `ansible_host`, SSH-пользователя и ключ. Публичные настройки при
+необходимости задаются в секции `[vpn:vars]`:
+
+```ini
+[vpn]
+vpn-node ansible_host=192.0.2.10 ansible_user=root ansible_ssh_private_key_file=~/.ssh/id_ed25519_deploy
+
+[vpn:vars]
+vpn_certbot_email=admin@example.com
+```
+
+Создайте локальный файл с общим `VPN_AGENT_TOKEN`, который уже настроен в
+центральном backend. Это единственный секрет, передаваемый с Ansible controller:
 
 ```bash
-ansible-playbook -i deploy/inventory.ini deploy/playbook.yml \
-  --ask-vault-pass -e deploy_revision=<approved-release-sha>
+mkdir -p deploy/secrets
+chmod 700 deploy/secrets
+printf '%s' '<VPN_AGENT_TOKEN>' > deploy/secrets/vpn-agent-token
+chmod 600 deploy/secrets/vpn-agent-token
 ```
 
-The playbook installs Docker Compose and Git, checks out that SHA, renders
-read-only secret files, uses the management proxy config from that checkout,
-pulls immutable runtime images, builds the agent, and applies Compose. It does
-not activate a Django `VPNInstance`; backfill, smoke, and manual activation
-remain central administrative steps.
+`deploy/inventory.ini` и весь `deploy/secrets/` исключены из Git. REALITY key
+pair, short ID и Hysteria obfs заранее создавать не требуется.
+
+По умолчанию используются:
+
+- backend `https://beatvault.ru`;
+- REALITY target/SNI `mtprotokeys.ru`;
+- management listener `0.0.0.0:8443`;
+- hostname Hysteria `<IPv4-с-дефисами>.sslip.io`.
+
+Публичные overrides из
+[`deploy/group_vars/vpn.example.yml`](../deploy/group_vars/vpn.example.yml)
+можно поместить в `[vpn:vars]` inventory.
+
+## Деплой
+
+Из корня репозитория выполняется одна команда:
+
+```bash
+ansible-playbook -i deploy/inventory.ini deploy/playbook.yml
+```
+
+Playbook:
+
+1. проверяет публичный IPv4 и разрешение соответствующего `sslip.io` hostname;
+2. устанавливает Docker Compose, Git, OpenSSL и Certbot;
+3. клонирует или обновляет `main` из GitHub в `/opt/vpn-node`;
+4. один раз создаёт уникальные node-specific REALITY и Hysteria параметры;
+5. получает отдельный Let's Encrypt сертификат через HTTP-01 на TCP/80;
+6. рендерит runtime-файлы с закрытыми правами;
+7. запускает Compose и ожидает успешный `/health`;
+8. выводит только публичные значения для создания `VPNInstance`.
+
+Повторный запуск обновляет приложение, но сохраняет node-specific ключи в
+`/opt/vpn-node/secrets/node-secrets.json`.
+
+## Сертификат и renewal
+
+Сертификат выпускается не на wildcard `*.sslip.io`, а на hostname конкретного
+сервера, например `144-31-159-127.sslip.io`. Для выпуска и обновления сервер
+должен принимать входящие TCP-соединения на порту 80.
+
+Штатный `certbot.timer` периодически запускает renewal. После фактического
+обновления deploy-hook копирует новый fullchain/private key в runtime-каталог и
+пересоздаёт только контейнер `hysteria`; agent, Xray и management proxy не
+затрагиваются.
+
+Проверка renewal:
+
+```bash
+systemctl is-enabled certbot.timer
+systemctl is-active certbot.timer
+certbot renew --dry-run
+```
+
+## Подключение ноды к backend
+
+После deploy создайте в Django Admin одну неактивную `VPNInstance`, используя
+публичный словарь из последней Ansible-задачи. Затем:
+
+1. выполните admin action backfill для этой ноды;
+2. дождитесь задач и при необходимости повторите backfill;
+3. проверьте VLESS и Hysteria через клиент;
+4. вручную активируйте ноду.
+
+Пользовательские UUID и Hysteria credentials клонировать не нужно: backend
+остаётся source of truth и передаёт их через bootstrap/backfill.

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+import stat
 import subprocess
 from pathlib import Path
 
@@ -8,7 +11,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_playbook_is_valid_and_deploys_an_explicit_git_revision() -> None:
+def _run_script(
+    script: Path,
+    *,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **env},
+    )
+
+
+def test_playbook_is_valid_and_deploys_main_from_github() -> None:
     result = subprocess.run(
         [
             "ansible-playbook",
@@ -25,84 +42,169 @@ def test_playbook_is_valid_and_deploys_an_explicit_git_revision() -> None:
     assert result.returncode == 0, result.stderr
 
     playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
-    assert 'version: "{{ deploy_revision }}"' in playbook
+    assert "https://github.com/youngwishes/my-vpn-vds-instance.git" in playbook
+    assert 'version: "{{ vpn_repository_version }}"' in playbook
+    assert "vpn_repository_version: main" in playbook
+    assert "deploy_revision" not in playbook
     assert "docker compose pull" in playbook
     assert "docker compose build --pull agent" in playbook
     assert "docker compose up -d --remove-orphans" in playbook
     assert "docker compose down" not in playbook
 
 
-def test_deploy_renders_read_only_secrets_without_logging_them() -> None:
+def test_node_secret_generator_creates_once_and_preserves_existing_material(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'PrivateKey: private-first' "
+        "'Password (PublicKey): public-first' 'Hash32: ignored'\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    openssl = bin_dir / "openssl"
+    openssl.write_text(
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  'rand -hex 8') printf '%s\\n' '0011223344556677' ;;\n"
+        "  'rand -hex 32') printf '%s\\n' "
+        "'0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    openssl.chmod(0o755)
+    secrets_dir = tmp_path / "secrets"
+    script = ROOT / "deploy/files/generate-node-secrets"
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "VPN_SECRETS_DIR": str(secrets_dir),
+        "XRAY_IMAGE": "example.invalid/xray@sha256:test",
+    }
+
+    first = _run_script(script, env=env)
+
+    assert first.returncode == 0, first.stderr
+    state_path = secrets_dir / "node-secrets.json"
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "hysteria_obfs": (
+            "0123456789abcdef0123456789abcdef"
+            "0123456789abcdef0123456789abcdef"
+        ),
+        "reality_private_key": "private-first",
+        "reality_public_key": "public-first",
+        "reality_short_id": "0011223344556677",
+    }
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+
+    docker.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'PrivateKey: private-second' "
+        "'Password (PublicKey): public-second'\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    second = _run_script(script, env=env)
+
+    assert second.returncode == 0, second.stderr
+    assert json.loads(state_path.read_text(encoding="utf-8"))[
+        "reality_private_key"
+    ] == "private-first"
+
+
+def test_certificate_deploy_hook_installs_renewed_files_and_recreates_hysteria(
+    tmp_path: Path,
+) -> None:
+    lineage = tmp_path / "lineage"
+    lineage.mkdir()
+    (lineage / "fullchain.pem").write_text("renewed certificate", encoding="utf-8")
+    (lineage / "privkey.pem").write_text("renewed private key", encoding="utf-8")
+    deploy_root = tmp_path / "vpn-node"
+    (deploy_root / "secrets").mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker_log = tmp_path / "docker.log"
+    docker = bin_dir / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        "printf 'cwd=%s args=%s\\n' \"$PWD\" \"$*\" > \"$DOCKER_LOG\"\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    result = _run_script(
+        ROOT / "deploy/files/renew-hysteria-certificate",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "RENEWED_LINEAGE": str(lineage),
+            "VPN_DEPLOY_ROOT": str(deploy_root),
+            "DOCKER_LOG": str(docker_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    certificate = deploy_root / "secrets/hysteria-tls.crt"
+    private_key = deploy_root / "secrets/hysteria-tls.key"
+    assert certificate.read_text(encoding="utf-8") == "renewed certificate"
+    assert private_key.read_text(encoding="utf-8") == "renewed private key"
+    assert stat.S_IMODE(certificate.stat().st_mode) == 0o400
+    assert stat.S_IMODE(private_key.stat().st_mode) == 0o400
+    assert docker_log.read_text(encoding="utf-8") == (
+        f"cwd={deploy_root} "
+        "args=compose up -d --no-deps --force-recreate hysteria\n"
+    )
+
+
+def test_deploy_configures_ip_hostname_certificate_renewal_and_public_output() -> None:
     playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
 
-    for secret_name in (
-        "vpn_agent_token",
-        "vpn_reality_private_key",
-        "vpn_hysteria_tls_cert",
-        "vpn_hysteria_tls_key",
-    ):
-        assert secret_name in playbook
-        assert f"- {secret_name} | length > 0" in playbook
-    assert "- vpn_hysteria_obfs | length > 0" in playbook
-    assert playbook.count("no_log: true") >= 2
+    assert "replace('.', '-') ~ '.sslip.io'" in playbook
+    assert "certbot certonly" in playbook
+    assert "--standalone" in playbook
+    assert "--keep-until-expiring" in playbook
+    assert "/etc/letsencrypt/renewal-hooks/deploy/vpn-node-hysteria" in playbook
+    assert "certbot.timer" in playbook
+    assert "reality_public_key" in playbook
+    assert "management_url" in playbook
+
+
+def test_deploy_reads_only_the_shared_token_from_the_controller() -> None:
+    playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
+
+    assert "playbook_dir ~ '/secrets/vpn-agent-token'" in playbook
+    assert "vpn_reality_private_key" not in playbook
+    assert "vpn_hysteria_tls_key" not in playbook
+    assert playbook.count("no_log: true") >= 3
     assert 'mode: "0400"' in playbook
 
 
-def test_deploy_renders_templates_from_the_checked_out_revision() -> None:
+def test_templates_are_rendered_from_the_github_checkout() -> None:
     playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
 
-    xray_source = 'src: "{{ vpn_deploy_root_effective }}/xray/config.json"'
-    hysteria_source = 'src: "{{ vpn_deploy_root_effective }}/hysteria/config.yaml"'
+    xray_source = 'src: "{{ vpn_deploy_root }}/xray/config.json"'
+    hysteria_source = 'src: "{{ vpn_deploy_root }}/hysteria/config.yaml"'
     assert xray_source in playbook
     assert hysteria_source in playbook
 
-    checkout = playbook.index("Check out the requested immutable revision")
+    checkout = playbook.index("Clone or update repository from GitHub")
     xray_slurp = playbook.index(xray_source)
     hysteria_slurp = playbook.index(hysteria_source)
-    render = playbook.index("Render runtime secret files")
-
+    render = playbook.index("Render transport configuration")
     assert checkout < xray_slurp < render
     assert checkout < hysteria_slurp < render
-    assert "xray_template.content | b64decode" in playbook
-    assert "hysteria_template.content | b64decode" in playbook
-    assert "lookup('ansible.builtin.file'" not in playbook
 
 
-def test_deploy_uses_management_proxy_config_from_checked_out_revision() -> None:
-    playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
-    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-
-    assert "Check out the requested immutable revision" in playbook
-    assert "docker compose up -d --remove-orphans" in playbook
-    assert "./management-proxy/nginx.conf:/etc/nginx/nginx.conf:ro" in compose
-
-
-def test_example_inventory_and_vars_have_no_server_ip_or_credentials() -> None:
+def test_example_inventory_and_vars_have_no_real_server_or_credentials() -> None:
     inventory = (ROOT / "deploy/inventory.example.ini").read_text(encoding="utf-8")
     variables = (ROOT / "deploy/group_vars/vpn.example.yml").read_text(
         encoding="utf-8"
     )
 
-    assert "example.invalid" in inventory
     assert re.search(r"(?:\d{1,3}\.){3}\d{1,3}", inventory) is None
-    for secret_name in (
-        "vpn_agent_token",
-        "vpn_reality_private_key",
-        "vpn_hysteria_tls_cert",
-        "vpn_hysteria_tls_key",
-    ):
-        assert re.search(rf"^{secret_name}\s*:", variables, re.MULTILINE) is None
-
-    assert 'vpn_agent_bind_address: ""' in variables
-    assert "vpn_backend_source_cidr" not in variables
-
-
-def test_deploy_accepts_public_management_address_without_host_firewall() -> None:
-    playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
-
-    assert "ipaddress.ip_address" in playbook
-    assert "vpn_agent_bind_address" in playbook
-    assert "VPN_AGENT_BIND_ADDRESS={{ vpn_agent_bind_address }}" in playbook
-    assert "vpn_backend_source_cidr" not in playbook
-    assert "VPN_AGENT_MGMT" not in playbook
-    assert "vpn-agent-firewall" not in playbook
+    assert "vpn_agent_token" not in variables
+    assert "private_key" not in variables
+    assert "tls_key" not in variables
+    assert "vpn_certbot_email" in variables

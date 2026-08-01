@@ -35,6 +35,32 @@ For a new node, keep the central `VPNInstance` inactive, run the repeatable
 central backfill, smoke-test both transports, and activate the node manually.
 The node itself has no persistent profile database.
 
+## Hysteria certificate renewal
+
+Each node has a Let's Encrypt certificate for its own dash-separated IPv4
+`sslip.io` hostname. Certbot's systemd timer renews it. A deploy hook copies a
+successfully renewed certificate into the runtime secret files and force
+recreates only the Hysteria container so Docker mounts the new files.
+
+Check the timer, current expiry and renewal log without printing key material:
+
+```bash
+systemctl is-enabled certbot.timer
+systemctl is-active certbot.timer
+systemctl list-timers certbot.timer
+openssl x509 -in secrets/hysteria-tls.crt -noout -subject -issuer -dates
+journalctl -u certbot.service --since=-7d --no-pager
+```
+
+Test the complete ACME renewal path after initial deployment:
+
+```bash
+certbot renew --dry-run
+```
+
+TCP/80 must remain reachable from the Internet for standalone HTTP-01 renewal.
+Do not manually replace `hysteria-tls.key` or print its contents.
+
 ## Rollback boundary
 
 Do not improvise an automatic rollback. Keep the node inactive or disable the

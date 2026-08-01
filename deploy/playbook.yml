@@ -1,39 +1,53 @@
 ---
-- name: Deploy VPN node runtime
+- name: Deploy VPN node
   hosts: vpn
   become: true
   vars:
-    vpn_deploy_root_effective: "{{ vpn_deploy_root | default('/opt/vpn-node') }}"
+    vpn_repository_url: https://github.com/youngwishes/my-vpn-vds-instance.git
+    vpn_repository_version: main
+    vpn_deploy_root: /opt/vpn-node
+    vpn_backend_url_effective: "{{ vpn_backend_url | default('https://beatvault.ru') }}"
+    vpn_agent_bind_address_effective: >-
+      {{ vpn_agent_bind_address | default('0.0.0.0') }}
+    vpn_management_port_effective: "{{ vpn_management_port | default(8443) }}"
+    vpn_reality_target_effective: >-
+      {{ vpn_reality_target | default('mtprotokeys.ru:443') }}
+    vpn_reality_server_name_effective: >-
+      {{ vpn_reality_server_name | default('mtprotokeys.ru') }}
+    vpn_certbot_email_effective: "{{ vpn_certbot_email | default('') | trim }}"
+    vpn_agent_token_file_effective: >-
+      {{ vpn_agent_token_file | default(playbook_dir ~ '/secrets/vpn-agent-token') }}
+    vpn_public_ipv4_effective: "{{ vpn_public_ipv4 | default(ansible_host) }}"
+    vpn_hysteria_domain_effective: >-
+      {{
+        vpn_hysteria_domain
+        | default((vpn_public_ipv4 | default(ansible_host)) | replace('.', '-') ~ '.sslip.io')
+      }}
+    vpn_xray_image: >-
+      ghcr.io/xtls/xray-core@sha256:a1644183accdb0b5be967093fe34be756fd5de15fe2ee0206e842ae17350967f
 
   tasks:
-    - name: Validate immutable revision and required runtime values
+    - name: Check the shared agent token on the controller
+      ansible.builtin.stat:
+        path: "{{ vpn_agent_token_file_effective }}"
+      become: false
+      delegate_to: localhost
+      register: vpn_agent_token_file_stat
+
+    - name: Validate deployment inputs
       ansible.builtin.assert:
         that:
-          - deploy_revision is defined
-          - deploy_revision | length == 40
-          - vpn_repository_url is defined
-          - vpn_backend_url is defined
-          - vpn_agent_bind_address is defined
-          - vpn_agent_bind_address | length > 0
-          - (vpn_management_port | default(8443) | int) > 0
-          - (vpn_management_port | default(8443) | int) < 65536
-          - vpn_reality_target is defined
-          - vpn_reality_server_name is defined
-          - vpn_reality_short_id is defined
-          - vpn_hysteria_obfs is defined
-          - vpn_agent_token is defined
-          - vpn_reality_private_key is defined
-          - vpn_hysteria_tls_cert is defined
-          - vpn_hysteria_tls_key is defined
-          - vpn_agent_token | length > 0
-          - vpn_reality_private_key | length > 0
-          - vpn_hysteria_obfs | length > 0
-          - vpn_hysteria_tls_cert | length > 0
-          - vpn_hysteria_tls_key | length > 0
-        quiet: true
-      no_log: true
+          - vpn_agent_token_file_stat.stat.isreg | default(false)
+          - vpn_backend_url_effective | length > 0
+          - vpn_reality_target_effective | length > 0
+          - vpn_reality_server_name_effective | length > 0
+          - (vpn_management_port_effective | int) > 0
+          - (vpn_management_port_effective | int) < 65536
+        fail_msg: >-
+          Create deploy/secrets/vpn-agent-token and configure any public
+          overrides in inventory before deployment.
 
-    - name: Validate management bind address
+    - name: Validate the public IPv4 address
       ansible.builtin.command:
         argv:
           - python3
@@ -42,113 +56,212 @@
             import ipaddress
             import sys
 
-            bind = ipaddress.ip_address(sys.argv[1])
-            if bind.version != 4:
-                raise ValueError("management bind must be IPv4")
-          - "{{ vpn_agent_bind_address }}"
+            address = ipaddress.ip_address(sys.argv[1])
+            if address.version != 4 or not address.is_global:
+                raise ValueError("vpn_public_ipv4 must be a public IPv4 address")
+          - "{{ vpn_public_ipv4_effective }}"
       changed_when: false
 
-    - name: Install Docker Compose and Git
+    - name: Install Docker, Git, OpenSSL and Certbot
       ansible.builtin.apt:
         name:
-          - docker.io
+          - certbot
           - docker-compose-v2
+          - docker.io
           - git
+          - openssl
         state: present
         update_cache: true
 
-    - name: Ensure Docker daemon is available
+    - name: Ensure Docker is running
       ansible.builtin.systemd_service:
         name: docker.service
         enabled: true
         state: started
 
-    - name: Check out the requested immutable revision
+    - name: Clone or update repository from GitHub
       ansible.builtin.git:
         repo: "{{ vpn_repository_url }}"
-        dest: "{{ vpn_deploy_root_effective }}"
-        version: "{{ deploy_revision }}"
-        force: false
-
-    - name: Read Xray template from the requested revision
-      ansible.builtin.slurp:
-        src: "{{ vpn_deploy_root_effective }}/xray/config.json"
-      register: xray_template
-
-    - name: Read Hysteria template from the requested revision
-      ansible.builtin.slurp:
-        src: "{{ vpn_deploy_root_effective }}/hysteria/config.yaml"
-      register: hysteria_template
+        dest: "{{ vpn_deploy_root }}"
+        version: "{{ vpn_repository_version }}"
+        force: true
 
     - name: Create private runtime directory
       ansible.builtin.file:
-        path: "{{ vpn_deploy_root_effective }}/secrets"
+        path: "{{ vpn_deploy_root }}/secrets"
         state: directory
         owner: root
         group: root
         mode: "0700"
 
+    - name: Install the shared management token
+      ansible.builtin.copy:
+        src: "{{ vpn_agent_token_file_effective }}"
+        dest: "{{ vpn_deploy_root }}/secrets/vpn-agent-token"
+        owner: "65532"
+        group: "65532"
+        mode: "0400"
+      no_log: true
+
+    - name: Generate persistent node-specific transport material
+      ansible.builtin.command:
+        argv:
+          - env
+          - "VPN_SECRETS_DIR={{ vpn_deploy_root }}/secrets"
+          - "XRAY_IMAGE={{ vpn_xray_image }}"
+          - "{{ vpn_deploy_root }}/deploy/files/generate-node-secrets"
+        creates: "{{ vpn_deploy_root }}/secrets/node-secrets.json"
+      no_log: true
+
+    - name: Read persistent node-specific transport material
+      ansible.builtin.slurp:
+        src: "{{ vpn_deploy_root }}/secrets/node-secrets.json"
+      register: vpn_node_secret_file
+      no_log: true
+
+    - name: Decode persistent node-specific transport material
+      ansible.builtin.set_fact:
+        vpn_node_secrets: "{{ vpn_node_secret_file.content | b64decode | from_json }}"
+      no_log: true
+
+    - name: Validate generated transport material
+      ansible.builtin.assert:
+        that:
+          - vpn_node_secrets.reality_private_key | length > 0
+          - vpn_node_secrets.reality_public_key | length > 0
+          - vpn_node_secrets.reality_short_id | length == 16
+          - vpn_node_secrets.hysteria_obfs | length == 64
+        quiet: true
+      no_log: true
+
+    - name: Verify the sslip.io hostname resolves to this node
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import socket
+            import sys
+
+            addresses = {
+                item[4][0]
+                for item in socket.getaddrinfo(
+                    sys.argv[1], None, family=socket.AF_INET
+                )
+            }
+            if sys.argv[2] not in addresses:
+                raise RuntimeError(
+                    f"{sys.argv[1]} resolves to {sorted(addresses)}, not {sys.argv[2]}"
+                )
+          - "{{ vpn_hysteria_domain_effective }}"
+          - "{{ vpn_public_ipv4_effective }}"
+      changed_when: false
+
+    - name: Request the Hysteria certificate with renewal email
+      ansible.builtin.command:
+        cmd: >-
+          certbot certonly --standalone --non-interactive --agree-tos
+          --keep-until-expiring --cert-name {{ vpn_hysteria_domain_effective }}
+          --email {{ vpn_certbot_email_effective }}
+          -d {{ vpn_hysteria_domain_effective }}
+        creates: >-
+          /etc/letsencrypt/live/{{ vpn_hysteria_domain_effective }}/fullchain.pem
+      when: vpn_certbot_email_effective | length > 0
+
+    - name: Request the Hysteria certificate without renewal email
+      ansible.builtin.command:
+        cmd: >-
+          certbot certonly --standalone --non-interactive --agree-tos
+          --keep-until-expiring --register-unsafely-without-email
+          --cert-name {{ vpn_hysteria_domain_effective }}
+          -d {{ vpn_hysteria_domain_effective }}
+        creates: >-
+          /etc/letsencrypt/live/{{ vpn_hysteria_domain_effective }}/fullchain.pem
+      when: vpn_certbot_email_effective | length == 0
+
+    - name: Install the current Hysteria certificate
+      ansible.builtin.copy:
+        src: >-
+          /etc/letsencrypt/live/{{ vpn_hysteria_domain_effective }}/fullchain.pem
+        dest: "{{ vpn_deploy_root }}/secrets/hysteria-tls.crt"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0400"
+
+    - name: Install the current Hysteria private key
+      ansible.builtin.copy:
+        src: >-
+          /etc/letsencrypt/live/{{ vpn_hysteria_domain_effective }}/privkey.pem
+        dest: "{{ vpn_deploy_root }}/secrets/hysteria-tls.key"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0400"
+      no_log: true
+
+    - name: Install the Hysteria certificate renewal deploy hook
+      ansible.builtin.copy:
+        src: "{{ vpn_deploy_root }}/deploy/files/renew-hysteria-certificate"
+        dest: /etc/letsencrypt/renewal-hooks/deploy/vpn-node-hysteria
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Ensure automatic certificate renewal is enabled
+      ansible.builtin.systemd_service:
+        name: certbot.timer
+        enabled: true
+        state: started
+
+    - name: Read Xray template from the GitHub checkout
+      ansible.builtin.slurp:
+        src: "{{ vpn_deploy_root }}/xray/config.json"
+      register: xray_template
+
+    - name: Read Hysteria template from the GitHub checkout
+      ansible.builtin.slurp:
+        src: "{{ vpn_deploy_root }}/hysteria/config.yaml"
+      register: hysteria_template
+
     - name: Write public runtime environment
       ansible.builtin.copy:
-        dest: "{{ vpn_deploy_root_effective }}/.env"
+        dest: "{{ vpn_deploy_root }}/.env"
         content: |
-          VPN_BACKEND_URL={{ vpn_backend_url }}
-          VPN_AGENT_BIND_ADDRESS={{ vpn_agent_bind_address }}
-          VPN_AGENT_MANAGEMENT_PORT={{ vpn_management_port | default(8443) }}
+          VPN_BACKEND_URL={{ vpn_backend_url_effective }}
+          VPN_AGENT_BIND_ADDRESS={{ vpn_agent_bind_address_effective }}
+          VPN_AGENT_MANAGEMENT_PORT={{ vpn_management_port_effective }}
         owner: root
         group: root
         mode: "0644"
 
-    - name: Render runtime secret files
+    - name: Render transport configuration
       no_log: true
       block:
-        - name: Write management bearer token
+        - name: Render Xray REALITY configuration
           ansible.builtin.copy:
-            dest: "{{ vpn_deploy_root_effective }}/secrets/vpn-agent-token"
-            content: "{{ vpn_agent_token }}"
-            owner: "65532"
-            group: "65532"
-            mode: "0400"
-
-        - name: Render Xray config with REALITY private values
-          ansible.builtin.copy:
-            dest: "{{ vpn_deploy_root_effective }}/secrets/xray-config.json"
+            dest: "{{ vpn_deploy_root }}/secrets/xray-config.json"
             content: >-
               {{
                 xray_template.content | b64decode
-                | replace('"__VPN_REALITY_TARGET__"', vpn_reality_target | to_json)
-                | replace('"__VPN_REALITY_SERVER_NAME__"', vpn_reality_server_name | to_json)
-                | replace('"__VPN_REALITY_PRIVATE_KEY__"', vpn_reality_private_key | to_json)
-                | replace('"__VPN_REALITY_SHORT_ID__"', vpn_reality_short_id | to_json)
+                | replace('"__VPN_REALITY_TARGET__"', vpn_reality_target_effective | to_json)
+                | replace('"__VPN_REALITY_SERVER_NAME__"', vpn_reality_server_name_effective | to_json)
+                | replace('"__VPN_REALITY_PRIVATE_KEY__"', vpn_node_secrets.reality_private_key | to_json)
+                | replace('"__VPN_REALITY_SHORT_ID__"', vpn_node_secrets.reality_short_id | to_json)
               }}
             owner: "65532"
             group: "65532"
             mode: "0400"
 
-        - name: Render Hysteria config
+        - name: Render Hysteria obfuscation configuration
           ansible.builtin.copy:
-            dest: "{{ vpn_deploy_root_effective }}/secrets/hysteria-config.yaml"
+            dest: "{{ vpn_deploy_root }}/secrets/hysteria-config.yaml"
             content: >-
               {{
                 hysteria_template.content | b64decode
-                | replace('"__VPN_HYSTERIA_OBFS__"', vpn_hysteria_obfs | to_json)
+                | replace('"__VPN_HYSTERIA_OBFS__"', vpn_node_secrets.hysteria_obfs | to_json)
               }}
-            owner: root
-            group: root
-            mode: "0400"
-
-        - name: Write Hysteria TLS certificate
-          ansible.builtin.copy:
-            dest: "{{ vpn_deploy_root_effective }}/secrets/hysteria-tls.crt"
-            content: "{{ vpn_hysteria_tls_cert }}"
-            owner: root
-            group: root
-            mode: "0400"
-
-        - name: Write Hysteria TLS private key
-          ansible.builtin.copy:
-            dest: "{{ vpn_deploy_root_effective }}/secrets/hysteria-tls.key"
-            content: "{{ vpn_hysteria_tls_key }}"
             owner: root
             group: root
             mode: "0400"
@@ -156,17 +269,40 @@
     - name: Pull pinned runtime images
       ansible.builtin.command: docker compose pull
       args:
-        chdir: "{{ vpn_deploy_root_effective }}"
+        chdir: "{{ vpn_deploy_root }}"
       changed_when: true
 
-    - name: Build agent at the requested revision
+    - name: Build agent from the GitHub checkout
       ansible.builtin.command: docker compose build --pull agent
       args:
-        chdir: "{{ vpn_deploy_root_effective }}"
+        chdir: "{{ vpn_deploy_root }}"
       changed_when: true
 
     - name: Apply runtime configuration
       ansible.builtin.command: docker compose up -d --remove-orphans
       args:
-        chdir: "{{ vpn_deploy_root_effective }}"
+        chdir: "{{ vpn_deploy_root }}"
       changed_when: true
+
+    - name: Wait for the node-agent health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ vpn_management_port_effective }}/health"
+        status_code: 200
+      register: vpn_health
+      retries: 12
+      delay: 5
+      until: vpn_health.status == 200
+
+    - name: Show values for the inactive backend VPNInstance
+      ansible.builtin.debug:
+        msg:
+          management_url: >-
+            http://{{ vpn_public_ipv4_effective }}:{{ vpn_management_port_effective }}
+          public_host: "{{ vpn_hysteria_domain_effective }}"
+          vless_port: 443
+          reality_sni: "{{ vpn_reality_server_name_effective }}"
+          reality_public_key: "{{ vpn_node_secrets.reality_public_key }}"
+          reality_short_id: "{{ vpn_node_secrets.reality_short_id }}"
+          hysteria_port: 443
+          hysteria_sni: "{{ vpn_hysteria_domain_effective }}"
+          hysteria_obfs: "{{ vpn_node_secrets.hysteria_obfs }}"
