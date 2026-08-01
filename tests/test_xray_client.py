@@ -152,6 +152,21 @@ def test_handler_service_client_accepts_exact_prefixed_absent_user_remove_respon
     client.delete_user(access_id=42)
 
 
+def test_handler_service_client_accepts_pinned_xray_absent_user_response() -> None:
+    client = HandlerServiceXrayClient(
+        api_address="127.0.0.1:10085",
+        inbound_tag="vless-reality",
+        command_runner=lambda _: (
+            "remove user: vpn-42\n"
+            "rpc error: code = Unknown desc = proxy/vless: "
+            "User vpn-42 not found.\n"
+            "Removed 0 user(s) in total.\n"
+        ),
+    )
+
+    client.delete_user(access_id=42)
+
+
 @pytest.mark.parametrize(
     "output",
     [
