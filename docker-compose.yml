@@ -46,7 +46,7 @@ services:
     image: ghcr.io/xtls/xray-core@sha256:a1644183accdb0b5be967093fe34be756fd5de15fe2ee0206e842ae17350967f
     restart: unless-stopped
     read_only: true
-    command: ["run", "-config", "/run/secrets/xray_config"]
+    command: ["run", "-format=json", "-config", "/run/secrets/xray_config"]
     ports:
       - "0.0.0.0:443:443/tcp"
     expose:
