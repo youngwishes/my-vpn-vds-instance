@@ -77,12 +77,12 @@ services:
     restart: unless-stopped
     read_only: true
     command:
-      ["--disable-update-check", "server", "-c", "/run/secrets/hysteria_config"]
+      ["--disable-update-check", "server", "-c", "/run/secrets/hysteria_config.yaml"]
     ports:
       - "0.0.0.0:443:443/udp"
     secrets:
       - source: hysteria_config
-        target: hysteria_config
+        target: hysteria_config.yaml
         mode: "0400"
       - source: hysteria_tls_cert
         target: hysteria_tls_cert
