@@ -104,6 +104,7 @@ class HandlerServiceXrayClient:
                             "port": 1,
                             "protocol": "vless",
                             "settings": {
+                                "decryption": "none",
                                 "users": [
                                     {
                                         "id": str(uuid),
