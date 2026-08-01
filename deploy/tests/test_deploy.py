@@ -130,7 +130,11 @@ def test_certificate_deploy_hook_installs_renewed_files_and_recreates_hysteria(
     docker = bin_dir / "docker"
     docker.write_text(
         "#!/bin/sh\n"
-        "printf 'cwd=%s args=%s\\n' \"$PWD\" \"$*\" > \"$DOCKER_LOG\"\n",
+        "if [ \"$*\" = 'compose ps --status running --services hysteria' ]; then\n"
+        "  printf '%s\\n' hysteria\n"
+        "else\n"
+        "  printf 'cwd=%s args=%s\\n' \"$PWD\" \"$*\" > \"$DOCKER_LOG\"\n"
+        "fi\n",
         encoding="utf-8",
     )
     docker.chmod(0o755)
@@ -140,7 +144,9 @@ def test_certificate_deploy_hook_installs_renewed_files_and_recreates_hysteria(
         env={
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "RENEWED_LINEAGE": str(lineage),
+            "VPN_CERTIFICATE_LINEAGE": str(lineage),
             "VPN_DEPLOY_ROOT": str(deploy_root),
+            "VPN_HYSTERIA_RESTART_DELAY": "0",
             "DOCKER_LOG": str(docker_log),
         },
     )
@@ -158,6 +164,64 @@ def test_certificate_deploy_hook_installs_renewed_files_and_recreates_hysteria(
     )
 
 
+def test_certificate_deploy_hook_ignores_an_unrelated_lineage(tmp_path: Path) -> None:
+    expected_lineage = tmp_path / "expected-lineage"
+    expected_lineage.mkdir()
+    unrelated_lineage = tmp_path / "unrelated-lineage"
+    unrelated_lineage.mkdir()
+    (unrelated_lineage / "fullchain.pem").write_text("wrong cert", encoding="utf-8")
+    (unrelated_lineage / "privkey.pem").write_text("wrong key", encoding="utf-8")
+    deploy_root = tmp_path / "vpn-node"
+    secrets_dir = deploy_root / "secrets"
+    secrets_dir.mkdir(parents=True)
+    certificate = secrets_dir / "hysteria-tls.crt"
+    private_key = secrets_dir / "hysteria-tls.key"
+    certificate.write_text("right cert", encoding="utf-8")
+    private_key.write_text("right key", encoding="utf-8")
+
+    result = _run_script(
+        ROOT / "deploy/files/renew-hysteria-certificate",
+        env={
+            "RENEWED_LINEAGE": str(unrelated_lineage),
+            "VPN_CERTIFICATE_LINEAGE": str(expected_lineage),
+            "VPN_DEPLOY_ROOT": str(deploy_root),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert certificate.read_text(encoding="utf-8") == "right cert"
+    assert private_key.read_text(encoding="utf-8") == "right key"
+
+
+def test_certificate_deploy_hook_fails_when_hysteria_does_not_stay_running(
+    tmp_path: Path,
+) -> None:
+    lineage = tmp_path / "lineage"
+    lineage.mkdir()
+    (lineage / "fullchain.pem").write_text("renewed certificate", encoding="utf-8")
+    (lineage / "privkey.pem").write_text("renewed private key", encoding="utf-8")
+    deploy_root = tmp_path / "vpn-node"
+    (deploy_root / "secrets").mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    docker.chmod(0o755)
+
+    result = _run_script(
+        ROOT / "deploy/files/renew-hysteria-certificate",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "RENEWED_LINEAGE": str(lineage),
+            "VPN_CERTIFICATE_LINEAGE": str(lineage),
+            "VPN_DEPLOY_ROOT": str(deploy_root),
+            "VPN_HYSTERIA_RESTART_DELAY": "0",
+        },
+    )
+
+    assert result.returncode != 0
+
+
 def test_deploy_configures_ip_hostname_certificate_renewal_and_public_output() -> None:
     playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
 
@@ -166,15 +230,25 @@ def test_deploy_configures_ip_hostname_certificate_renewal_and_public_output() -
     assert "--standalone" in playbook
     assert "--keep-until-expiring" in playbook
     assert "/etc/letsencrypt/renewal-hooks/deploy/vpn-node-hysteria" in playbook
+    assert "/etc/default/vpn-node-certificate" in playbook
     assert "certbot.timer" in playbook
+    assert "docker compose ps --status running --services hysteria" in playbook
     assert "reality_public_key" in playbook
     assert "management_url" in playbook
+
+    certificate_tasks = playbook[
+        playbook.index("Request the Hysteria certificate with renewal email") :
+        playbook.index("Install the current Hysteria certificate")
+    ]
+    assert "creates:" not in certificate_tasks
 
 
 def test_deploy_reads_only_the_shared_token_from_the_controller() -> None:
     playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
 
     assert "playbook_dir ~ '/secrets/vpn-agent-token'" in playbook
+    assert "'ansible.builtin.file'," in playbook
+    assert "vpn_agent_token_file_effective," in playbook
     assert "vpn_reality_private_key" not in playbook
     assert "vpn_hysteria_tls_key" not in playbook
     assert playbook.count("no_log: true") >= 3

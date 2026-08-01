@@ -2,7 +2,20 @@
 set -eu
 
 : "${RENEWED_LINEAGE:?RENEWED_LINEAGE is required}"
+certificate_config=${VPN_CERTIFICATE_CONFIG:-/etc/default/vpn-node-certificate}
+if [ -f "$certificate_config" ]; then
+    # The file is root-owned and contains only the expected lineage and deploy path.
+    . "$certificate_config"
+fi
+
+: "${VPN_CERTIFICATE_LINEAGE:?VPN_CERTIFICATE_LINEAGE is required}"
 deploy_root=${VPN_DEPLOY_ROOT:-/opt/vpn-node}
+restart_delay=${VPN_HYSTERIA_RESTART_DELAY:-5}
+
+if [ "$(readlink -f "$RENEWED_LINEAGE")" != \
+    "$(readlink -f "$VPN_CERTIFICATE_LINEAGE")" ]; then
+    exit 0
+fi
 
 install -m 0400 "$RENEWED_LINEAGE/fullchain.pem" \
     "$deploy_root/secrets/hysteria-tls.crt"
@@ -11,3 +24,5 @@ install -m 0400 "$RENEWED_LINEAGE/privkey.pem" \
 
 cd "$deploy_root"
 docker compose up -d --no-deps --force-recreate hysteria
+sleep "$restart_delay"
+test "$(docker compose ps --status running --services hysteria)" = "hysteria"

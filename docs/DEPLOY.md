@@ -87,6 +87,8 @@ Playbook:
 systemctl is-enabled certbot.timer
 systemctl is-active certbot.timer
 certbot renew --dry-run
+RENEWED_LINEAGE=/etc/letsencrypt/live/<dash-separated-ip>.sslip.io \
+  /etc/letsencrypt/renewal-hooks/deploy/vpn-node-hysteria
 ```
 
 ## Подключение ноды к backend

@@ -52,10 +52,13 @@ openssl x509 -in secrets/hysteria-tls.crt -noout -subject -issuer -dates
 journalctl -u certbot.service --since=-7d --no-pager
 ```
 
-Test the complete ACME renewal path after initial deployment:
+Test ACME renewal, then separately exercise the installed deploy hook. Ubuntu
+22.04 ships Certbot 1.21, which does not support `--run-deploy-hooks`:
 
 ```bash
 certbot renew --dry-run
+RENEWED_LINEAGE=/etc/letsencrypt/live/<dash-separated-ip>.sslip.io \
+  /etc/letsencrypt/renewal-hooks/deploy/vpn-node-hysteria
 ```
 
 TCP/80 must remain reachable from the Internet for standalone HTTP-01 renewal.

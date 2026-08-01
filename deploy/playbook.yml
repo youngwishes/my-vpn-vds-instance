@@ -47,6 +47,24 @@
           Create deploy/secrets/vpn-agent-token and configure any public
           overrides in inventory before deployment.
 
+    - name: Validate the shared agent token is not empty
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              lookup(
+                'ansible.builtin.file',
+                vpn_agent_token_file_effective,
+                errors='ignore'
+              )
+              | default('', true)
+              | trim
+              | length
+            ) > 0
+        quiet: true
+        fail_msg: deploy/secrets/vpn-agent-token must not be empty.
+      no_log: true
+
     - name: Validate the public IPv4 address
       ansible.builtin.command:
         argv:
@@ -164,8 +182,6 @@
           --keep-until-expiring --cert-name {{ vpn_hysteria_domain_effective }}
           --email {{ vpn_certbot_email_effective }}
           -d {{ vpn_hysteria_domain_effective }}
-        creates: >-
-          /etc/letsencrypt/live/{{ vpn_hysteria_domain_effective }}/fullchain.pem
       when: vpn_certbot_email_effective | length > 0
 
     - name: Request the Hysteria certificate without renewal email
@@ -175,8 +191,6 @@
           --keep-until-expiring --register-unsafely-without-email
           --cert-name {{ vpn_hysteria_domain_effective }}
           -d {{ vpn_hysteria_domain_effective }}
-        creates: >-
-          /etc/letsencrypt/live/{{ vpn_hysteria_domain_effective }}/fullchain.pem
       when: vpn_certbot_email_effective | length == 0
 
     - name: Install the current Hysteria certificate
@@ -199,6 +213,16 @@
         group: root
         mode: "0400"
       no_log: true
+
+    - name: Scope the certificate renewal hook to this node certificate
+      ansible.builtin.copy:
+        dest: /etc/default/vpn-node-certificate
+        content: |
+          VPN_CERTIFICATE_LINEAGE=/etc/letsencrypt/live/{{ vpn_hysteria_domain_effective }}
+          VPN_DEPLOY_ROOT={{ vpn_deploy_root }}
+        owner: root
+        group: root
+        mode: "0644"
 
     - name: Install the Hysteria certificate renewal deploy hook
       ansible.builtin.copy:
@@ -292,6 +316,17 @@
       retries: 12
       delay: 5
       until: vpn_health.status == 200
+
+    - name: Verify Hysteria stays running
+      ansible.builtin.command: >-
+        docker compose ps --status running --services hysteria
+      args:
+        chdir: "{{ vpn_deploy_root }}"
+      changed_when: false
+      register: vpn_hysteria_status
+      retries: 3
+      delay: 5
+      until: "'hysteria' in vpn_hysteria_status.stdout_lines"
 
     - name: Show values for the inactive backend VPNInstance
       ansible.builtin.debug:
