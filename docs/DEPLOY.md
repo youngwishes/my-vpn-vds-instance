@@ -43,7 +43,8 @@ pair, short ID и Hysteria obfs заранее создавать не треб�
 По умолчанию используются:
 
 - backend `https://beatvault.ru`;
-- REALITY target/SNI `mtprotokeys.ru`;
+- swap-файл `/swapfile` размером 2 ГиБ, только если активный swap отсутствует;
+- REALITY target `mtprotokeys.com:443`, SNI `mtprotokeys.com`;
 - management listener `0.0.0.0:8443`;
 - hostname Hysteria `<IPv4-с-дефисами>.sslip.io`.
 
@@ -56,20 +57,28 @@ pair, short ID и Hysteria obfs заранее создавать не треб�
 Из корня репозитория выполняется одна команда:
 
 ```bash
-ansible-playbook -i deploy/inventory.ini deploy/playbook.yml
+make deploy
 ```
 
 Playbook:
 
 1. проверяет публичный IPv4 и разрешение соответствующего `sslip.io` hostname;
-2. устанавливает Docker Compose, Git, OpenSSL и Certbot;
-3. клонирует или обновляет `main` из GitHub в `/opt/vpn-node`;
-4. один раз создаёт уникальные node-specific параметры либо безопасно импортирует
+2. устанавливает системные зависимости и создаёт постоянный `/swapfile`, если
+   на сервере нет активного swap;
+3. устанавливает Docker Compose при необходимости;
+4. клонирует или обновляет `main` из GitHub в `/opt/vpn-node`;
+5. один раз создаёт уникальные node-specific параметры либо безопасно импортирует
    их из существующего legacy runtime;
-5. получает отдельный Let's Encrypt сертификат через HTTP-01 на TCP/80;
-6. рендерит runtime-файлы с закрытыми правами;
-7. запускает Compose и ожидает успешный `/health`;
-8. выводит только публичные значения для создания `VPNInstance`.
+6. получает отдельный Let's Encrypt сертификат через HTTP-01 на TCP/80;
+7. рендерит runtime-файлы с закрытыми правами;
+8. запускает Compose и ожидает успешный `/health`;
+9. выводит только публичные значения для создания `VPNInstance`.
+
+Размер нового swap-файла задаётся переменной `vpn_swap_size_mb` и по умолчанию
+равен `2048`. Если на сервере уже активен любой swap, playbook не меняет его.
+Если активного swap нет, существующий `/swapfile`, который не является
+обычным swap-файлом, не перезаписывается: деплой останавливается с ошибкой для
+ручной проверки.
 
 Повторный запуск обновляет приложение, но сохраняет node-specific ключи в
 `/opt/vpn-node/secrets/node-secrets.json`.

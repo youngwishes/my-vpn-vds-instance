@@ -54,6 +54,103 @@ def test_playbook_is_valid_and_deploys_main_from_github() -> None:
     assert "docker compose down" not in playbook
 
 
+def test_playbook_defaults_reality_to_the_live_com_domain() -> None:
+    playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
+
+    assert "vpn_reality_target | default('mtprotokeys.com:443')" in playbook
+    assert "vpn_reality_server_name | default('mtprotokeys.com')" in playbook
+
+
+def test_playbook_preserves_an_existing_docker_compose_installation() -> None:
+    playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
+
+    base_packages = playbook[
+        playbook.index("Install Git, OpenSSL and Certbot") :
+        playbook.index("Check whether Docker engine is available")
+    ]
+    assert "docker.io" not in base_packages
+    assert "docker-compose-v2" not in base_packages
+
+    engine_probe = playbook[
+        playbook.index("Check whether Docker engine is available") :
+        playbook.index("Install Docker engine when unavailable")
+    ]
+    assert "docker --version" in engine_probe
+    assert "failed_when: false" in engine_probe
+    assert "register: vpn_docker_engine_check" in engine_probe
+
+    docker_install = playbook[
+        playbook.index("Install Docker engine when unavailable") :
+        playbook.index("Check whether Docker Compose is available")
+    ]
+    assert "docker.io" in docker_install
+    assert "docker-compose-v2" not in docker_install
+    assert "when: vpn_docker_engine_check.rc != 0" in docker_install
+
+    compose_probe = playbook[
+        playbook.index("Check whether Docker Compose is available") :
+        playbook.index("Install Docker Compose when unavailable")
+    ]
+    assert "docker compose version" in compose_probe
+    assert "failed_when: false" in compose_probe
+    assert "register: vpn_docker_compose_check" in compose_probe
+
+    compose_install = playbook[
+        playbook.index("Install Docker Compose when unavailable") :
+        playbook.index("Ensure Docker is running")
+    ]
+    assert "docker.io" not in compose_install
+    assert "docker-compose-v2" in compose_install
+    assert "when: vpn_docker_compose_check.rc != 0" in compose_install
+
+
+def test_playbook_creates_persistent_swap_only_when_no_swap_is_active() -> None:
+    playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
+
+    assert "vpn_swap_size_mb_effective" in playbook
+    assert "vpn_swap_size_mb | default(2048)" in playbook
+
+    swap_tasks = playbook[
+        playbook.index("Configure swap when none is active") :
+        playbook.index("Check whether Docker Compose is available")
+    ]
+    assert "ansible_swaptotal_mb | int == 0" in swap_tasks
+    assert "fallocate" in swap_tasks
+    assert 'mode: "0600"' in swap_tasks
+    assert "mkswap" in swap_tasks
+    assert "/swapfile none swap sw 0 0" in swap_tasks
+    assert "swapon /swapfile" in swap_tasks
+    assert swap_tasks.index("Activate the swap file") < swap_tasks.index(
+        "Persist the swap file"
+    )
+    assert "swapon --show=NAME --noheadings --raw" in swap_tasks
+    assert "register: vpn_active_swap_paths" in swap_tasks
+    persist_tasks = swap_tasks[
+        swap_tasks.index("Persist the swap file") :
+    ]
+    assert "- ansible_swaptotal_mb | int == 0" in persist_tasks
+    assert (
+        "- \"'/swapfile' in vpn_active_swap_paths.stdout_lines\""
+        in persist_tasks
+    )
+    assert "Refuse to overwrite a non-swap /swapfile" in swap_tasks
+    assert "vpn_swapfile_stat.stat.isreg" in swap_tasks
+    assert "vpn_swapfile_stat.stat.islnk" in swap_tasks
+
+    staging_tasks = swap_tasks[
+        swap_tasks.index("Prepare a new swap file") :
+        swap_tasks.index("Restrict swap file permissions")
+    ]
+    assert "ansible.builtin.tempfile" in staging_tasks
+    assert "prefix: .vpn-node-swapfile." in staging_tasks
+    assert "register: vpn_swapfile_staging" in staging_tasks
+    assert "vpn_swapfile_staging.path" in staging_tasks
+    assert "always:" in staging_tasks
+    assert staging_tasks.index("mkswap") < staging_tasks.index("- ln")
+    assert staging_tasks.index("- ln") < staging_tasks.index("- -T")
+    assert staging_tasks.index("- ln") < staging_tasks.index("- /swapfile")
+
+
 def test_node_secret_generator_creates_once_and_preserves_existing_material(
     tmp_path: Path,
 ) -> None:

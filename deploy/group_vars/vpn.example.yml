@@ -4,6 +4,9 @@ vpn_reality_target: example.com:443
 vpn_reality_server_name: example.com
 vpn_certbot_email: admin@example.invalid
 
+# Created only when the node has no active swap. Existing active swap is preserved.
+# vpn_swap_size_mb: 2048
+
 # The playbook derives the public IPv4 from ansible_host and issues a certificate
 # for <dash-separated-ip>.sslip.io. Override only when using another hostname.
 # vpn_public_ipv4: 192.0.2.10

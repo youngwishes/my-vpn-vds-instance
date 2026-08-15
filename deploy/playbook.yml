@@ -10,10 +10,11 @@
     vpn_agent_bind_address_effective: >-
       {{ vpn_agent_bind_address | default('0.0.0.0') }}
     vpn_management_port_effective: "{{ vpn_management_port | default(8443) }}"
+    vpn_swap_size_mb_effective: "{{ vpn_swap_size_mb | default(2048) | int }}"
     vpn_reality_target_effective: >-
-      {{ vpn_reality_target | default('mtprotokeys.ru:443') }}
+      {{ vpn_reality_target | default('mtprotokeys.com:443') }}
     vpn_reality_server_name_effective: >-
-      {{ vpn_reality_server_name | default('mtprotokeys.ru') }}
+      {{ vpn_reality_server_name | default('mtprotokeys.com') }}
     vpn_certbot_email_effective: "{{ vpn_certbot_email | default('') | trim }}"
     vpn_agent_token_file_effective: >-
       {{ vpn_agent_token_file | default(playbook_dir ~ '/secrets/vpn-agent-token') }}
@@ -43,6 +44,7 @@
           - vpn_reality_server_name_effective | length > 0
           - (vpn_management_port_effective | int) > 0
           - (vpn_management_port_effective | int) < 65536
+          - (vpn_swap_size_mb_effective | int) > 0
         fail_msg: >-
           Create deploy/secrets/vpn-agent-token and configure any public
           overrides in inventory before deployment.
@@ -80,16 +82,158 @@
           - "{{ vpn_public_ipv4_effective }}"
       changed_when: false
 
-    - name: Install Docker, Git, OpenSSL and Certbot
+    - name: Install Git, OpenSSL and Certbot
       ansible.builtin.apt:
         name:
           - certbot
-          - docker-compose-v2
-          - docker.io
           - git
           - openssl
         state: present
         update_cache: true
+
+    - name: Configure swap when none is active
+      when: ansible_swaptotal_mb | int == 0
+      block:
+        - name: Check whether /swapfile already exists
+          ansible.builtin.stat:
+            path: /swapfile
+            follow: false
+          register: vpn_swapfile_stat
+
+        - name: Refuse an unsafe existing /swapfile path
+          ansible.builtin.assert:
+            that:
+              - >-
+                not vpn_swapfile_stat.stat.exists
+                or (
+                  vpn_swapfile_stat.stat.isreg | default(false)
+                  and not (vpn_swapfile_stat.stat.islnk | default(false))
+                )
+            fail_msg: >-
+              /swapfile exists but is not a regular non-symlink file;
+              refusing to modify it.
+
+        - name: Inspect the existing /swapfile signature
+          ansible.builtin.command:
+            argv:
+              - blkid
+              - -p
+              - -s
+              - TYPE
+              - -o
+              - value
+              - /swapfile
+          register: vpn_swapfile_type
+          changed_when: false
+          failed_when: false
+          when:
+            - vpn_swapfile_stat.stat.exists
+            - vpn_swapfile_stat.stat.isreg | default(false)
+            - not (vpn_swapfile_stat.stat.islnk | default(false))
+
+        - name: Refuse to overwrite a non-swap /swapfile
+          ansible.builtin.assert:
+            that:
+              - >-
+                not vpn_swapfile_stat.stat.exists
+                or (vpn_swapfile_type.stdout | default('') | trim) == 'swap'
+            fail_msg: >-
+              /swapfile already exists but is not initialized as swap;
+              refusing to overwrite it.
+
+        - name: Prepare a new swap file
+          when: not vpn_swapfile_stat.stat.exists
+          block:
+            - name: Create a unique staged swap file
+              ansible.builtin.tempfile:
+                state: file
+                path: /
+                prefix: .vpn-node-swapfile.
+              register: vpn_swapfile_staging
+
+            - name: Allocate the staged swap file
+              ansible.builtin.command:
+                argv:
+                  - fallocate
+                  - -l
+                  - "{{ vpn_swap_size_mb_effective }}M"
+                  - "{{ vpn_swapfile_staging.path }}"
+
+            - name: Restrict staged swap file permissions
+              ansible.builtin.file:
+                path: "{{ vpn_swapfile_staging.path }}"
+                owner: root
+                group: root
+                mode: "0600"
+
+            - name: Initialize the staged swap file
+              ansible.builtin.command:
+                argv:
+                  - mkswap
+                  - "{{ vpn_swapfile_staging.path }}"
+
+            - name: Publish the swap file atomically without overwriting
+              ansible.builtin.command:
+                argv:
+                  - ln
+                  - -T
+                  - "{{ vpn_swapfile_staging.path }}"
+                  - /swapfile
+          always:
+            - name: Remove the managed swap staging file
+              ansible.builtin.file:
+                path: "{{ vpn_swapfile_staging.path }}"
+                state: absent
+              when: vpn_swapfile_staging.path is defined
+
+        - name: Restrict swap file permissions
+          ansible.builtin.file:
+            path: /swapfile
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: Activate the swap file
+          ansible.builtin.command: swapon /swapfile
+
+    - name: Inspect active swap paths
+      ansible.builtin.command: swapon --show=NAME --noheadings --raw
+      register: vpn_active_swap_paths
+      changed_when: false
+
+    - name: Persist the swap file
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        regexp: '^\s*/swapfile\s+'
+        line: /swapfile none swap sw 0 0
+        state: present
+      when:
+        - ansible_swaptotal_mb | int == 0
+        - "'/swapfile' in vpn_active_swap_paths.stdout_lines"
+
+    - name: Check whether Docker engine is available
+      ansible.builtin.command: docker --version
+      register: vpn_docker_engine_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install Docker engine when unavailable
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+      when: vpn_docker_engine_check.rc != 0
+
+    - name: Check whether Docker Compose is available
+      ansible.builtin.command: docker compose version
+      register: vpn_docker_compose_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install Docker Compose when unavailable
+      ansible.builtin.apt:
+        name: docker-compose-v2
+        state: present
+      when: vpn_docker_compose_check.rc != 0
 
     - name: Ensure Docker is running
       ansible.builtin.systemd_service:
