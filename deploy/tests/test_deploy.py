@@ -711,6 +711,24 @@ def test_templates_are_rendered_from_the_github_checkout() -> None:
     assert checkout < hysteria_slurp < render
 
 
+def test_xray_and_agent_are_recreated_when_reality_config_changes() -> None:
+    playbook = (ROOT / "deploy/playbook.yml").read_text(encoding="utf-8")
+
+    render = playbook.index("Render Xray REALITY configuration")
+    reload_runtime = playbook.index(
+        "Reload Xray and agent after REALITY configuration changes"
+    )
+    apply_runtime = playbook.index("Apply runtime configuration")
+    assert render < reload_runtime < apply_runtime
+
+    render_tasks = playbook[render:reload_runtime]
+    assert "register: vpn_xray_runtime_config" in render_tasks
+
+    reload_tasks = playbook[reload_runtime:apply_runtime]
+    assert "docker compose up -d --force-recreate xray agent" in reload_tasks
+    assert "when: vpn_xray_runtime_config.changed" in reload_tasks
+
+
 def test_example_inventory_and_vars_have_no_real_server_or_credentials() -> None:
     inventory = (ROOT / "deploy/inventory.example.ini").read_text(encoding="utf-8")
     variables = (ROOT / "deploy/group_vars/vpn.example.yml").read_text(
