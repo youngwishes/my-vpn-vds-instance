@@ -760,3 +760,12 @@ def test_hysteria_only_deploy_removes_existing_xray_before_starting_services() -
     assert 'when: not (vpn_vless_enabled_effective | bool)' in removal
     assert 'when: vpn_xray_runtime_config.changed and (vpn_vless_enabled_effective | bool)' in playbook
     assert 'Restore dual-protocol Compose configuration' in playbook
+
+
+def test_proxy_refreshes_agent_address_after_runtime_changes_before_health_check() -> None:
+    playbook = (ROOT / 'deploy/playbook.yml').read_text()
+    apply = playbook.index('Apply runtime configuration')
+    reload_proxy = playbook.index('Reload management proxy after agent recreation')
+    health = playbook.index('Wait for the node-agent health endpoint')
+    assert apply < reload_proxy < health
+    assert 'docker compose exec -T management-proxy nginx -s reload' in playbook[reload_proxy:health]
