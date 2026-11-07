@@ -5,6 +5,7 @@
   vars:
     vpn_repository_url: https://github.com/youngwishes/my-vpn-vds-instance.git
     vpn_repository_version: main
+    vpn_vless_enabled_effective: "{{ vpn_vless_enabled | default(true) | bool }}"
     vpn_deploy_root: /opt/vpn-node
     vpn_backend_url_effective: "{{ vpn_backend_url | default('https://beatvault.ru') }}"
     vpn_agent_bind_address_effective: >-
@@ -248,6 +249,29 @@
         version: "{{ vpn_repository_version }}"
         force: true
 
+    - name: Enable Hysteria-only Compose configuration
+      ansible.builtin.copy:
+        src: "{{ vpn_deploy_root }}/docker-compose.hysteria-only.yml"
+        dest: "{{ vpn_deploy_root }}/docker-compose.override.yml"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: not (vpn_vless_enabled_effective | bool)
+
+    - name: Restore dual-protocol Compose configuration
+      ansible.builtin.file:
+        path: "{{ vpn_deploy_root }}/docker-compose.override.yml"
+        state: absent
+      when: vpn_vless_enabled_effective | bool
+
+    - name: Remove the existing Xray container on Hysteria-only nodes
+      ansible.builtin.command: docker compose --profile disabled rm --stop --force xray
+      args:
+        chdir: "{{ vpn_deploy_root }}"
+      changed_when: true
+      when: not (vpn_vless_enabled_effective | bool)
+
     - name: Create private runtime directory
       ansible.builtin.file:
         path: "{{ vpn_deploy_root }}/secrets"
@@ -398,6 +422,7 @@
       ansible.builtin.slurp:
         src: "{{ vpn_deploy_root }}/xray/config.json"
       register: xray_template
+      when: vpn_vless_enabled_effective | bool
 
     - name: Read Hysteria template from the GitHub checkout
       ansible.builtin.slurp:
@@ -433,6 +458,7 @@
             group: "65532"
             mode: "0400"
           register: vpn_xray_runtime_config
+          when: vpn_vless_enabled_effective | bool
 
         - name: Render Hysteria obfuscation configuration
           ansible.builtin.copy:
@@ -464,7 +490,7 @@
       args:
         chdir: "{{ vpn_deploy_root }}"
       changed_when: true
-      when: vpn_xray_runtime_config.changed
+      when: vpn_xray_runtime_config.changed and (vpn_vless_enabled_effective | bool)
 
     - name: Apply runtime configuration
       ansible.builtin.command: docker compose up -d --remove-orphans
@@ -498,6 +524,7 @@
           management_url: >-
             http://{{ vpn_public_ipv4_effective }}:{{ vpn_management_port_effective }}
           public_host: "{{ vpn_hysteria_domain_effective }}"
+          vless_enabled: "{{ vpn_vless_enabled_effective | bool }}"
           vless_port: 443
           reality_sni: "{{ vpn_reality_server_name_effective }}"
           reality_public_key: "{{ vpn_node_secrets.reality_public_key }}"

@@ -52,6 +52,24 @@ pair, short ID и Hysteria obfs заранее создавать не треб�
 [`deploy/group_vars/vpn.example.yml`](../deploy/group_vars/vpn.example.yml)
 можно поместить в `[vpn:vars]` inventory.
 
+## Узел только с Hysteria
+
+Для отдельного узла добавьте `vpn_vless_enabled=false` в его строку inventory.
+По умолчанию значение `true`: VLESS и Hysteria продолжают работать вместе.
+Не задавайте `false` для всей группы, если остальные узлы должны сохранить VLESS.
+
+Playbook устанавливает `docker-compose.hysteria-only.yml` как локальный
+`docker-compose.override.yml`, удаляет существующий контейнер Xray и оставляет
+Hysteria на UDP/443. Агент получает `VPN_VLESS_ENABLED=false` и обслуживает
+bootstrap, профили и health без Xray. Поле `vless_uuid` в management API остаётся
+для совместимости; сохранённые REALITY-ключи не удаляются. Генератор секретов
+на новом узле пока создаёт полный набор транспортных ключей.
+
+Обычные команды `docker compose` и обновление сертификата автоматически
+учитывают override. Возврат `vpn_vless_enabled=true` и повторный деплой удаляют
+override и восстанавливают оба протокола. В backend для этого же узла также
+нужно отключить VLESS, чтобы убрать его из пользовательских подписок.
+
 ## Деплой
 
 Из корня репозитория выполняется одна команда:

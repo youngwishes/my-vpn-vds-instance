@@ -12,15 +12,17 @@ from src.xray.service import XrayClient
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ProfileService:
     profile_store: InMemoryProfileStore
-    xray_client: XrayClient
+    xray_client: XrayClient | None
 
     def upsert(self, *, profile: VPNProfile) -> None:
-        self.xray_client.upsert_user(
-            access_id=profile.access_id,
-            uuid=profile.vless_uuid,
-        )
+        if self.xray_client is not None:
+            self.xray_client.upsert_user(
+                access_id=profile.access_id,
+                uuid=profile.vless_uuid,
+            )
         self.profile_store.upsert(profile=profile)
 
     def delete(self, *, access_id: int) -> None:
-        self.xray_client.delete_user(access_id=access_id)
+        if self.xray_client is not None:
+            self.xray_client.delete_user(access_id=access_id)
         self.profile_store.delete(access_id=access_id)

@@ -7,3 +7,4 @@ deploy/inventory.ini
 deploy/secrets/
 __pycache__/
 *.py[cod]
+docker-compose.override.yml

@@ -37,7 +37,9 @@ def create_app(
     bootstrap_service: BootstrapTask | None = None,
 ) -> FastAPI:
     store = profile_store or create_profile_store()
-    xray = xray_client or create_xray_client(settings=settings)
+    xray = None
+    if settings.vless_enabled:
+        xray = xray_client or create_xray_client(settings=settings)
     service = profile_service or create_profile_service(
         profile_store=store,
         xray_client=xray,
