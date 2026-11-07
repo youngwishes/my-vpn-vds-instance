@@ -747,3 +747,16 @@ def test_example_inventory_and_vars_have_no_real_server_or_credentials() -> None
     assert "private_key" not in variables
     assert "tls_key" not in variables
     assert "vpn_certbot_email" in variables
+
+
+def test_hysteria_only_deploy_removes_existing_xray_before_starting_services() -> None:
+    playbook = (ROOT / 'deploy/playbook.yml').read_text()
+    assert 'vpn_vless_enabled | default(true) | bool' in playbook
+    remove = playbook.index('Remove the existing Xray container on Hysteria-only nodes')
+    apply = playbook.index('Apply runtime configuration')
+    assert remove < apply
+    removal = playbook[remove:playbook.index('Create private runtime directory')]
+    assert 'docker compose --profile disabled rm --stop --force xray' in removal
+    assert 'when: not (vpn_vless_enabled_effective | bool)' in removal
+    assert 'when: vpn_xray_runtime_config.changed and (vpn_vless_enabled_effective | bool)' in playbook
+    assert 'Restore dual-protocol Compose configuration' in playbook

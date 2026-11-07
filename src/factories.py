@@ -23,7 +23,7 @@ def create_xray_client(*, settings: Settings) -> HandlerServiceXrayClient:
 def create_profile_service(
     *,
     profile_store: InMemoryProfileStore,
-    xray_client: XrayClient,
+    xray_client: XrayClient | None,
 ) -> ProfileService:
     return ProfileService(profile_store=profile_store, xray_client=xray_client)
 

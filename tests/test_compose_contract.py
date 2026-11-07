@@ -225,3 +225,20 @@ def test_local_override_keeps_agent_internal_and_publishes_only_proxy() -> None:
             "host_ip": "127.0.0.1",
         }
     ]
+
+
+def test_hysteria_only_override_excludes_xray_and_keeps_udp_listener() -> None:
+    result = subprocess.run(
+        ['docker', 'compose', '-f', 'docker-compose.yml', '-f',
+         'docker-compose.hysteria-only.yml', 'config', '--format', 'json'],
+        cwd=ROOT, check=False, capture_output=True, text=True,
+        env={**os.environ, 'COMPOSE_PROFILES': ''},
+    )
+    assert result.returncode == 0, result.stderr
+    services = json.loads(result.stdout)['services']
+    assert set(services) == {'agent', 'hysteria', 'management-proxy'}
+    assert services['agent'].get('depends_on', {}) == {}
+    assert services['agent']['environment']['VPN_VLESS_ENABLED'] == 'false'
+    ports = [(p['published'], p['protocol']) for s in services.values() for p in s.get('ports', [])]
+    assert ('443', 'udp') in ports
+    assert ('443', 'tcp') not in ports

@@ -13,7 +13,8 @@ async def health(request: Request) -> dict[str, str] | JSONResponse:
         return JSONResponse(status_code=503, content={"status": "unhealthy"})
 
     try:
-        request.app.state.xray_client.health()
+        if request.app.state.xray_client is not None:
+            request.app.state.xray_client.health()
     except Exception:
         return JSONResponse(status_code=503, content={"status": "unhealthy"})
 

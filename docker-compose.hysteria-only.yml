@@ -1,0 +1,8 @@
+# Installed as docker-compose.override.yml by the Hysteria-only deployment.
+services:
+  agent:
+    environment:
+      VPN_VLESS_ENABLED: "false"
+    depends_on: !reset {}
+  xray:
+    profiles: [disabled]
